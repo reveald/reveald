@@ -1,0 +1,1 @@
+# reveald - an Elasticsearch front
