@@ -36,6 +36,27 @@ func WithCredentials(username, password string) ElasticBackendOption {
 	}
 }
 
+// WithHealthCheck enables / disables healthchecking
+func WithHealthCheck(enabled bool) ElasticBackendOption {
+	return func(b *ElasticBackend) {
+		b.opts = append(b.opts, elastic.SetHealthcheck(enabled))
+	}
+}
+
+// WithHealthcheckInterval sets the healthcheck interval
+func WithHealthcheckInterval(d time.Duration) ElasticBackendOption {
+	return func(b *ElasticBackend) {
+		b.opts = append(b.opts, elastic.SetHealthcheckInterval(d))
+	}
+}
+
+// WithSniff enables / disables sniffing
+func WithSniff(enabled bool) ElasticBackendOption {
+	return func(b *ElasticBackend) {
+		b.opts = append(b.opts, elastic.SetSniff(enabled))
+	}
+}
+
 // NewElasticBackend creates a new backend for
 // Reveald, targeting Elasticsearch
 func NewElasticBackend(nodes []string, opts ...ElasticBackendOption) (*ElasticBackend, error) {
