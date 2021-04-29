@@ -5,22 +5,45 @@ import "github.com/olivere/elastic/v7"
 // QueryBuilder is a construct to build a
 // dynamic Elasticsearch query
 type QueryBuilder struct {
-	request   *Request
-	aggs      map[string]elastic.Aggregation
-	root      *elastic.BoolQuery
-	indices   []string
-	selection *DocumentSelector
+	request    *Request
+	aggs       map[string]elastic.Aggregation
+	root       *elastic.BoolQuery
+	postFilter *elastic.BoolQuery
+	indices    []string
+	selection  *DocumentSelector
+}
+
+// PostFilterQueryBuilder ...
+type PostFilterQueryBuilder struct {
+	root *elastic.BoolQuery
+}
+
+// With filters documents based on the specified query
+func (qb *PostFilterQueryBuilder) With(query elastic.Query) {
+	qb.root.Must(query)
+}
+
+// Without filters document based on an inverted
+// query
+func (qb *PostFilterQueryBuilder) Without(query elastic.Query) {
+	qb.root.MustNot(query)
+}
+
+// Boost document based on specified query
+func (qb *PostFilterQueryBuilder) Boost(query elastic.Query) {
+	qb.root.Should(query)
 }
 
 // NewQueryBuilder returns a new base query for
 // a set of indices
 func NewQueryBuilder(r *Request, indices ...string) *QueryBuilder {
 	return &QueryBuilder{
-		request:   r,
-		aggs:      make(map[string]elastic.Aggregation),
-		root:      elastic.NewBoolQuery(),
-		indices:   indices,
-		selection: nil,
+		request:    r,
+		aggs:       make(map[string]elastic.Aggregation),
+		root:       elastic.NewBoolQuery(),
+		postFilter: elastic.NewBoolQuery(),
+		indices:    indices,
+		selection:  nil,
 	}
 }
 
@@ -51,6 +74,22 @@ func (qb *QueryBuilder) Boost(query elastic.Query) {
 	qb.root.Should(query)
 }
 
+// PostFilterWith post filters documents based on the specified query
+func (qb *QueryBuilder) PostFilterWith(query elastic.Query) {
+	qb.postFilter.Must(query)
+}
+
+// PostFilterWithout post filters document based on an inverted
+// query
+func (qb *QueryBuilder) PostFilterWithout(query elastic.Query) {
+	qb.postFilter.MustNot(query)
+}
+
+// PostFilterBoost postfilter document based on specified query
+func (qb *QueryBuilder) PostFilterBoost(query elastic.Query) {
+	qb.postFilter.Should(query)
+}
+
 // Selection returns a DocumentSelector specifying
 // pagination and sort
 func (qb *QueryBuilder) Selection() *DocumentSelector {
@@ -77,7 +116,7 @@ func (qb *QueryBuilder) RawQuery() elastic.Query {
 func (qb *QueryBuilder) Build() *elastic.SearchSource {
 	src := elastic.NewSearchSource()
 
-	query := src.Query(qb.root)
+	query := src.Query(qb.root).PostFilter(qb.postFilter)
 	for name, agg := range qb.aggs {
 		query.Aggregation(name, agg)
 	}
