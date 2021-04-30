@@ -5,11 +5,12 @@ import "github.com/olivere/elastic/v7"
 // QueryBuilder is a construct to build a
 // dynamic Elasticsearch query
 type QueryBuilder struct {
-	request   *Request
-	aggs      map[string]elastic.Aggregation
-	root      *elastic.BoolQuery
-	indices   []string
-	selection *DocumentSelector
+	request    *Request
+	aggs       map[string]elastic.Aggregation
+	root       *elastic.BoolQuery
+	postFilter *elastic.BoolQuery
+	indices    []string
+	selection  *DocumentSelector
 }
 
 // NewQueryBuilder returns a new base query for
@@ -51,6 +52,31 @@ func (qb *QueryBuilder) Boost(query elastic.Query) {
 	qb.root.Should(query)
 }
 
+// PostFilterWith post filters documents based on the specified query
+func (qb *QueryBuilder) PostFilterWith(query elastic.Query) {
+	if qb.postFilter == nil {
+		qb.postFilter = elastic.NewBoolQuery()
+	}
+	qb.postFilter.Must(query)
+}
+
+// PostFilterWithout post filters document based on an inverted
+// query
+func (qb *QueryBuilder) PostFilterWithout(query elastic.Query) {
+	if qb.postFilter == nil {
+		qb.postFilter = elastic.NewBoolQuery()
+	}
+	qb.postFilter.MustNot(query)
+}
+
+// PostFilterBoost postfilter document based on specified query
+func (qb *QueryBuilder) PostFilterBoost(query elastic.Query) {
+	if qb.postFilter == nil {
+		qb.postFilter = elastic.NewBoolQuery()
+	}
+	qb.postFilter.Should(query)
+}
+
 // Selection returns a DocumentSelector specifying
 // pagination and sort
 func (qb *QueryBuilder) Selection() *DocumentSelector {
@@ -78,6 +104,11 @@ func (qb *QueryBuilder) Build() *elastic.SearchSource {
 	src := elastic.NewSearchSource()
 
 	query := src.Query(qb.root)
+
+	if qb.postFilter != nil {
+		query.PostFilter(qb.postFilter)
+	}
+
 	for name, agg := range qb.aggs {
 		query.Aggregation(name, agg)
 	}

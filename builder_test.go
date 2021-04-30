@@ -50,7 +50,27 @@ func Test_That_Aggregation_Adds_Aggregation_To_Source(t *testing.T) {
 
 	actual := builder.Build()
 	expected := elastic.NewSearchSource().
-		Query(elastic.NewBoolQuery()).Aggregation("property", agg)
+		Query(elastic.NewBoolQuery()).
+		Aggregation("property", agg)
+
+	assert.Equal(t, expected, actual)
+}
+
+func Test_That_PostFilter_Adds_To_Source(t *testing.T) {
+	builder := NewQueryBuilder(nil, "idx")
+	q := elastic.NewTermQuery("property", "value")
+
+	builder.PostFilterWith(q)
+	builder.PostFilterWithout(q)
+	builder.PostFilterBoost(q)
+
+	actual := builder.Build()
+	expected := elastic.NewSearchSource().
+		Query(elastic.NewBoolQuery()).
+		PostFilter(elastic.NewBoolQuery().
+			Must(q).
+			MustNot(q).
+			Should(q))
 
 	assert.Equal(t, expected, actual)
 }
