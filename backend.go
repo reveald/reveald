@@ -17,11 +17,6 @@ type ElasticBackend struct {
 	opts   []elastic.ClientOptionFunc
 }
 
-//HttpDoer interface for doing http requests.
-type HttpDoer interface {
-	Do(*http.Request) (*http.Response, error)
-}
-
 // ElasticBackendOption is a type for passing
 // functional options to the Elastic Backend constructor
 type ElasticBackendOption func(*ElasticBackend)
@@ -64,7 +59,7 @@ func WithSniff(enabled bool) ElasticBackendOption {
 }
 
 // WithHttpClient configures a http doer to use for the http requests to elastic backend.
-func WithHttpClient(httpClient HttpDoer) ElasticBackendOption {
+func WithHttpClient(httpClient *http.Client) ElasticBackendOption {
 	return func(b *ElasticBackend) {
 		b.opts = append(b.opts, elastic.SetHttpClient(httpClient))
 	}
