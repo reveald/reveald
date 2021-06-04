@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/olivere/elastic/v7"
@@ -54,6 +55,13 @@ func WithHealthcheckInterval(d time.Duration) ElasticBackendOption {
 func WithSniff(enabled bool) ElasticBackendOption {
 	return func(b *ElasticBackend) {
 		b.opts = append(b.opts, elastic.SetSniff(enabled))
+	}
+}
+
+// WithHttpClient configures a http doer to use for the http requests to elastic backend.
+func WithHttpClient(httpClient *http.Client) ElasticBackendOption {
+	return func(b *ElasticBackend) {
+		b.opts = append(b.opts, elastic.SetHttpClient(httpClient))
 	}
 }
 
