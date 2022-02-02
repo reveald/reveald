@@ -36,6 +36,12 @@ func (qb *QueryBuilder) Indices() []string {
 	return qb.indices
 }
 
+// SetIndices changes sets the query builder indices to be used
+// while searching in Elasticsearch.
+func (qb *QueryBuilder) SetIndices(indices ...string) {
+	qb.indices = indices
+}
+
 // With filters documents based on the specified query
 func (qb *QueryBuilder) With(query elastic.Query) {
 	qb.root.Must(query)
