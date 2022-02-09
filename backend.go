@@ -10,6 +10,19 @@ import (
 	"github.com/olivere/elastic/v7"
 )
 
+// Retrier decides whether to retry a failed HTTP request with Elasticsearch.
+type Retrier interface {
+	// Retry is called when a request has failed. It decides whether to retry
+	// the call, how long to wait for the next call, or whether to return an
+	// error (which will be returned to the service that started the HTTP
+	// request in the first place).
+	//
+	// Callers may also use this to inspect the HTTP request/response and
+	// the error that happened. Additional data can be passed through via
+	// the context.
+	Retry(ctx context.Context, retry int, req *http.Request, resp *http.Response, err error) (time.Duration, bool, error)
+}
+
 // ElasticBackend defines an Elasticsearch backend
 // for Reveald
 type ElasticBackend struct {
@@ -62,6 +75,13 @@ func WithSniff(enabled bool) ElasticBackendOption {
 func WithHttpClient(httpClient *http.Client) ElasticBackendOption {
 	return func(b *ElasticBackend) {
 		b.opts = append(b.opts, elastic.SetHttpClient(httpClient))
+	}
+}
+
+// WithRetrier configures a retry strategy to use when a http request to elastic backend fails.
+func WithRetrier(retrier Retrier) ElasticBackendOption {
+	return func(b *ElasticBackend) {
+		b.opts = append(b.opts, elastic.SetRetrier(retrier))
 	}
 }
 
