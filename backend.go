@@ -10,6 +10,9 @@ import (
 	"github.com/olivere/elastic/v7"
 )
 
+// Retrier decides whether to retry a failed HTTP request with Elasticsearch.
+type Retrier elastic.Retrier
+
 // ElasticBackend defines an Elasticsearch backend
 // for Reveald
 type ElasticBackend struct {
@@ -62,6 +65,13 @@ func WithSniff(enabled bool) ElasticBackendOption {
 func WithHttpClient(httpClient *http.Client) ElasticBackendOption {
 	return func(b *ElasticBackend) {
 		b.opts = append(b.opts, elastic.SetHttpClient(httpClient))
+	}
+}
+
+// WithRetrier configures a retry strategy to use when a http request to elastic backend fails.
+func WithRetrier(retrier Retrier) ElasticBackendOption {
+	return func(b *ElasticBackend) {
+		b.opts = append(b.opts, elastic.SetRetrier(retrier))
 	}
 }
 
