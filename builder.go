@@ -5,23 +5,27 @@ import "github.com/olivere/elastic/v7"
 // QueryBuilder is a construct to build a
 // dynamic Elasticsearch query
 type QueryBuilder struct {
-	request    *Request
-	aggs       map[string]elastic.Aggregation
-	root       *elastic.BoolQuery
-	postFilter *elastic.BoolQuery
-	indices    []string
-	selection  *DocumentSelector
+	request         *Request
+	aggs            map[string]elastic.Aggregation
+	root            *elastic.BoolQuery
+	postFilter      *elastic.BoolQuery
+	indices         []string
+	selection       *DocumentSelector
+	runtimeMappings elastic.RuntimeMappings
+	docValueFields  []string
 }
 
 // NewQueryBuilder returns a new base query for
 // a set of indices
 func NewQueryBuilder(r *Request, indices ...string) *QueryBuilder {
 	return &QueryBuilder{
-		request:   r,
-		aggs:      make(map[string]elastic.Aggregation),
-		root:      elastic.NewBoolQuery(),
-		indices:   indices,
-		selection: nil,
+		request:         r,
+		aggs:            make(map[string]elastic.Aggregation),
+		root:            elastic.NewBoolQuery(),
+		indices:         indices,
+		selection:       nil,
+		runtimeMappings: elastic.RuntimeMappings{},
+		docValueFields:  []string{},
 	}
 }
 
@@ -104,6 +108,14 @@ func (qb *QueryBuilder) RawQuery() elastic.Query {
 	return qb.root
 }
 
+func (qb *QueryBuilder) WithRuntimeMappings(runtimeMappings elastic.RuntimeMappings) {
+	qb.runtimeMappings = runtimeMappings
+}
+
+func (qb *QueryBuilder) DocvalueFields(docvalueFields ...string) {
+	qb.docValueFields = append(qb.docValueFields, docvalueFields...)
+}
+
 // Build creates the final Elasticsearch query, containing
 // queries, aggregations, sort options, and pagination settings
 func (qb *QueryBuilder) Build() *elastic.SearchSource {
@@ -140,6 +152,9 @@ func (qb *QueryBuilder) Build() *elastic.SearchSource {
 	if qb.selection.sort != nil {
 		src = src.SortBy(qb.selection.sort)
 	}
+
+	src = src.RuntimeMappings(qb.runtimeMappings)
+	src = src.DocvalueFields(qb.docValueFields...)
 
 	return src
 }
