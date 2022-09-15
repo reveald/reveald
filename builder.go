@@ -110,7 +110,9 @@ func (qb *QueryBuilder) RawQuery() elastic.Query {
 
 // RuntimeMappings specifies optional runtime mappings.
 func (qb *QueryBuilder) WithRuntimeMappings(runtimeMappings elastic.RuntimeMappings) {
-	qb.runtimeMappings = runtimeMappings
+	for k, v := range runtimeMappings {
+		qb.runtimeMappings[k] = v
+	}
 }
 
 // DocvalueFields adds one or more fields to load from the field data cache
