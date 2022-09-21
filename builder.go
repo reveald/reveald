@@ -126,6 +126,9 @@ func (qb *QueryBuilder) DocvalueFields(docvalueFields ...string) {
 func (qb *QueryBuilder) Build() *elastic.SearchSource {
 	src := elastic.NewSearchSource()
 
+	src = src.RuntimeMappings(qb.runtimeMappings)
+	src = src.DocvalueFields(qb.docValueFields...)
+
 	query := src.Query(qb.root)
 
 	if qb.postFilter != nil {
@@ -157,9 +160,6 @@ func (qb *QueryBuilder) Build() *elastic.SearchSource {
 	if qb.selection.sort != nil {
 		src = src.SortBy(qb.selection.sort)
 	}
-
-	src = src.RuntimeMappings(qb.runtimeMappings)
-	src = src.DocvalueFields(qb.docValueFields...)
 
 	return src
 }
