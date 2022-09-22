@@ -66,8 +66,10 @@ func Test_SortingFeature_DefaultSelected(t *testing.T) {
 	for _, tt := range table {
 		t.Run(tt.name, func(t *testing.T) {
 			qb := reveald.NewQueryBuilder(tt.req, "-")
-			r := &reveald.Result{}
-			tt.feature.handle(qb.Request(), r)
+			r, err := tt.feature.handle(qb.Request(), &reveald.Result{})
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
 			ok := false
 			for _, so := range r.Sorting.Options {
 				if so.Selected && so.Name == tt.selectedName {
