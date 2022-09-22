@@ -92,7 +92,7 @@ func (sf *SortingFeature) build(builder *reveald.QueryBuilder) {
 func (sf *SortingFeature) handle(req *reveald.Request, result *reveald.Result) (*reveald.Result, error) {
 	var options []*reveald.ResultSortingOption
 
-	selected := ""
+	selected := sf.defaultOption
 	if req.Has(sf.param) {
 		v, err := req.Get(sf.param)
 		if err == nil {
