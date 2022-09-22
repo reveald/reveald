@@ -51,3 +51,33 @@ func Test_SortingFeature_Build(t *testing.T) {
 		})
 	}
 }
+
+func Test_SortingFeature_DefaultSelected(t *testing.T) {
+	table := []struct {
+		name         string
+		feature      *SortingFeature
+		req          *reveald.Request
+		selectedName string
+	}{
+		{"request missing param", NewSortingFeature("sort", WithDefaultSortOption("nameAsc"), WithSortOption("nameAsc", "property", true), WithSortOption("nameDesc", "property", false)), reveald.NewRequest(), "nameAsc"},
+		{"request with param", NewSortingFeature("sort", WithDefaultSortOption("nameAsc"), WithSortOption("nameAsc", "property", true), WithSortOption("nameDesc", "property", false)), reveald.NewRequest(reveald.NewParameter("sort", "nameDesc")), "nameDesc"},
+	}
+
+	for _, tt := range table {
+		t.Run(tt.name, func(t *testing.T) {
+			qb := reveald.NewQueryBuilder(tt.req, "-")
+			r := &reveald.Result{}
+			tt.feature.handle(qb.Request(), r)
+			ok := false
+			for _, so := range r.Sorting.Options {
+				if so.Selected && so.Name == tt.selectedName {
+					ok = true
+				}
+			}
+
+			if !ok {
+				t.Errorf("no sorting option selected")
+			}
+		})
+	}
+}
