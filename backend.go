@@ -112,10 +112,22 @@ func (b *ElasticBackend) Execute(ctx context.Context, builder *QueryBuilder) (*R
 	var hits []map[string]interface{}
 	for _, hit := range result.Hits.Hits {
 		var source map[string]interface{}
-		err := json.Unmarshal(hit.Source, &source)
-		if err == nil {
-			hits = append(hits, source)
+		if err := json.Unmarshal(hit.Source, &source); err != nil {
+			continue
 		}
+
+		if len(hit.Fields) > 0 {
+			for field, value := range hit.Fields {
+				list, ok := value.([]interface{})
+				if ok {
+					value = list[0]
+				}
+
+				source[field] = value
+			}
+		}
+
+		hits = append(hits, source)
 	}
 
 	if len(hits) == 0 {
