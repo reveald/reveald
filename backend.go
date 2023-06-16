@@ -28,7 +28,7 @@ type ElasticBackendOption func(*ElasticBackend)
 // communicating with Elasticsearch (default is "http")
 func WithScheme(scheme string) ElasticBackendOption {
 	return func(b *ElasticBackend) {
-		b.opts = append(b.opts, elastic.SetScheme("http"))
+		b.opts = append(b.opts, elastic.SetScheme(scheme))
 	}
 }
 
