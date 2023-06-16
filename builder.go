@@ -11,6 +11,7 @@ type QueryBuilder struct {
 	postFilter      *elastic.BoolQuery
 	indices         []string
 	selection       *DocumentSelector
+	scriptedFields  []*elastic.ScriptField
 	runtimeMappings elastic.RuntimeMappings
 	docValueFields  []string
 }
@@ -24,6 +25,7 @@ func NewQueryBuilder(r *Request, indices ...string) *QueryBuilder {
 		root:            elastic.NewBoolQuery(),
 		indices:         indices,
 		selection:       nil,
+		scriptedFields:  nil,
 		runtimeMappings: elastic.RuntimeMappings{},
 		docValueFields:  []string{},
 	}
@@ -108,7 +110,12 @@ func (qb *QueryBuilder) RawQuery() elastic.Query {
 	return qb.root
 }
 
-// RuntimeMappings specifies optional runtime mappings.
+// WithScriptedFields specifies scripted fields to add to query
+func (qb *QueryBuilder) WithScriptedField(scriptedField *elastic.ScriptField) {
+	qb.scriptedFields = append(qb.scriptedFields, scriptedField)
+}
+
+// WithRuntimeMappings specifies optional runtime mappings.
 func (qb *QueryBuilder) WithRuntimeMappings(runtimeMappings elastic.RuntimeMappings) {
 	for k, v := range runtimeMappings {
 		qb.runtimeMappings[k] = v
@@ -126,6 +133,7 @@ func (qb *QueryBuilder) DocvalueFields(docvalueFields ...string) {
 func (qb *QueryBuilder) Build() *elastic.SearchSource {
 	src := elastic.NewSearchSource()
 
+	src = src.ScriptFields(qb.scriptedFields...)
 	src = src.RuntimeMappings(qb.runtimeMappings)
 	src = src.DocvalueFields(qb.docValueFields...)
 
