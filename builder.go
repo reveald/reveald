@@ -133,11 +133,10 @@ func (qb *QueryBuilder) DocvalueFields(docvalueFields ...string) {
 func (qb *QueryBuilder) Build() *elastic.SearchSource {
 	src := elastic.NewSearchSource()
 
-	src = src.ScriptFields(qb.scriptedFields...)
 	src = src.RuntimeMappings(qb.runtimeMappings)
 	src = src.DocvalueFields(qb.docValueFields...)
 
-	query := src.Query(qb.root)
+	query := src.Query(qb.root).ScriptFields(qb.scriptedFields...)
 
 	if qb.postFilter != nil {
 		query.PostFilter(qb.postFilter)
