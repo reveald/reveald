@@ -2,6 +2,7 @@ package featureset
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/olivere/elastic/v7"
 	"github.com/reveald/reveald"
@@ -9,11 +10,20 @@ import (
 
 type DynamicFilterFeature struct {
 	property string
+	nested   bool
 }
 
 func NewDynamicFilterFeature(property string) *DynamicFilterFeature {
 	return &DynamicFilterFeature{
-		property,
+		property: property,
+		nested:   false,
+	}
+}
+
+func NewNestedDocumentFilterFeature(property string) *DynamicFilterFeature {
+	return &DynamicFilterFeature{
+		property: property,
+		nested:   true,
 	}
 }
 
@@ -31,8 +41,16 @@ func (dff *DynamicFilterFeature) Process(builder *reveald.QueryBuilder, next rev
 func (dff *DynamicFilterFeature) build(builder *reveald.QueryBuilder) {
 	keyword := fmt.Sprintf("%s.keyword", dff.property)
 
-	builder.Aggregation(dff.property,
-		elastic.NewTermsAggregation().Field(keyword))
+	if !dff.nested {
+		builder.Aggregation(dff.property,
+			elastic.NewTermsAggregation().Field(keyword))
+	} else {
+		path := strings.Split(dff.property, ".")[0]
+		builder.Aggregation(dff.property,
+			elastic.NewNestedAggregation().
+				Path(path).
+				SubAggregation(dff.property, elastic.NewTermsAggregation().Field(keyword)))
+	}
 
 	if builder.Request().Has(dff.property) {
 		p, err := builder.Request().Get(dff.property)
@@ -50,9 +68,27 @@ func (dff *DynamicFilterFeature) build(builder *reveald.QueryBuilder) {
 }
 
 func (dff *DynamicFilterFeature) handle(result *reveald.Result) (*reveald.Result, error) {
-	agg, ok := result.RawResult().Aggregations.Terms(dff.property)
-	if !ok {
-		return result, nil
+	var agg *elastic.AggregationBucketKeyItems
+
+	if !dff.nested {
+		items, ok := result.RawResult().Aggregations.Terms(dff.property)
+		if !ok {
+			return result, nil
+		}
+
+		agg = items
+	} else {
+		bucket, ok := result.RawResult().Aggregations.Children(dff.property)
+		if !ok {
+			return result, nil
+		}
+
+		items, ok := bucket.Aggregations.Terms(dff.property)
+		if !ok {
+			return result, nil
+		}
+
+		agg = items
 	}
 
 	var buckets []*reveald.ResultBucket
