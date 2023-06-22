@@ -63,7 +63,12 @@ func (dff *DynamicFilterFeature) build(builder *reveald.QueryBuilder) {
 			bq = bq.Should(elastic.NewTermQuery(keyword, v))
 		}
 
-		builder.With(bq)
+		if !dff.nested {
+			builder.With(bq)
+		} else {
+			path := strings.Split(dff.property, ".")[0]
+			builder.With(elastic.NewNestedQuery(path, bq))
+		}
 	}
 }
 
