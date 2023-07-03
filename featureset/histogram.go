@@ -10,6 +10,7 @@ import (
 type HistogramFeature struct {
 	property    string
 	neg         bool
+	zeroBucket  bool
 	interval    float64
 	minDocCount int64
 }
@@ -19,6 +20,12 @@ type HistogramOption func(*HistogramFeature)
 func WithNegativeValuesAllowed() HistogramOption {
 	return func(hf *HistogramFeature) {
 		hf.neg = true
+	}
+}
+
+func WithoutZeroBucket() HistogramOption {
+	return func(hf *HistogramFeature) {
+		hf.zeroBucket = false
 	}
 }
 
@@ -38,6 +45,7 @@ func NewHistogramFeature(property string, opts ...HistogramOption) *HistogramFea
 	hf := &HistogramFeature{
 		property:    property,
 		neg:         false,
+		zeroBucket:  true,
 		interval:    100,
 		minDocCount: 0,
 	}
@@ -103,13 +111,17 @@ func (hf *HistogramFeature) handle(result *reveald.Result) (*reveald.Result, err
 			zeroOut = false
 		}
 
+		if bucket.Key == 0 && !hf.zeroBucket && bucket.DocCount == 0 {
+			continue
+		}
+
 		buckets = append(buckets, &reveald.ResultBucket{
 			Value:    fmt.Sprintf("%0.f", bucket.Key),
 			HitCount: bucket.DocCount,
 		})
 	}
 
-	if zeroOut {
+	if hf.zeroBucket && zeroOut {
 		bucket := &reveald.ResultBucket{
 			Value:    0,
 			HitCount: 0,
