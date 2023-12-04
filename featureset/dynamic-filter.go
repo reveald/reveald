@@ -11,19 +11,22 @@ import (
 type DynamicFilterFeature struct {
 	property string
 	nested   bool
+	agg      AggregationFeature
 }
 
-func NewDynamicFilterFeature(property string) *DynamicFilterFeature {
+func NewDynamicFilterFeature(property string, opts ...AggregationOption) *DynamicFilterFeature {
 	return &DynamicFilterFeature{
 		property: property,
 		nested:   false,
+		agg:      buildAggregationFeature(opts...),
 	}
 }
 
-func NewNestedDocumentFilterFeature(property string) *DynamicFilterFeature {
+func NewNestedDocumentFilterFeature(property string, opts ...AggregationOption) *DynamicFilterFeature {
 	return &DynamicFilterFeature{
 		property: property,
 		nested:   true,
+		agg:      buildAggregationFeature(opts...),
 	}
 }
 
@@ -43,13 +46,13 @@ func (dff *DynamicFilterFeature) build(builder *reveald.QueryBuilder) {
 
 	if !dff.nested {
 		builder.Aggregation(dff.property,
-			elastic.NewTermsAggregation().Field(keyword))
+			elastic.NewTermsAggregation().Field(keyword).Size(dff.agg.size))
 	} else {
 		path := strings.Split(dff.property, ".")[0]
 		builder.Aggregation(dff.property,
 			elastic.NewNestedAggregation().
 				Path(path).
-				SubAggregation(dff.property, elastic.NewTermsAggregation().Field(keyword)))
+				SubAggregation(dff.property, elastic.NewTermsAggregation().Field(keyword).Size(dff.agg.size)))
 	}
 
 	if builder.Request().Has(dff.property) {

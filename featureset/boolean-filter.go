@@ -10,10 +10,14 @@ import (
 
 type BooleanFilterFeature struct {
 	property string
+	agg      AggregationFeature
 }
 
-func NewBooleanFilterFeature(property string) *BooleanFilterFeature {
-	return &BooleanFilterFeature{property}
+func NewBooleanFilterFeature(property string, opts ...AggregationOption) *BooleanFilterFeature {
+	return &BooleanFilterFeature{
+		property: property,
+		agg:      buildAggregationFeature(opts...),
+	}
 }
 
 func (bff *BooleanFilterFeature) Process(builder *reveald.QueryBuilder, next reveald.FeatureFunc) (*reveald.Result, error) {
@@ -31,7 +35,7 @@ func (bff *BooleanFilterFeature) build(builder *reveald.QueryBuilder) {
 	keyword := fmt.Sprintf("%s.keyword", bff.property)
 
 	builder.Aggregation(bff.property,
-		elastic.NewTermsAggregation().Field(keyword))
+		elastic.NewTermsAggregation().Field(keyword).Size(bff.agg.size))
 
 	if !builder.Request().Has(bff.property) {
 		return
