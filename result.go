@@ -31,8 +31,9 @@ func (r *Result) Request() *Request {
 
 // ResultBucket is a container for aggregations
 type ResultBucket struct {
-	Value    interface{}
-	HitCount int64
+	Value            interface{}
+	HitCount         int64
+	SubResultBuckets map[string][]*ResultBucket
 }
 
 // ResultPagination is a container for pagination
