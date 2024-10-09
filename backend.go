@@ -3,6 +3,7 @@ package reveald
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -100,15 +101,7 @@ func NewElasticBackend(nodes []string, opts ...ElasticBackendOption) (*ElasticBa
 	return b, nil
 }
 
-// Execute an Elasticsearch query
-func (b *ElasticBackend) Execute(ctx context.Context, builder *QueryBuilder) (*Result, error) {
-	src := builder.Build()
-	svc := b.client.Search(builder.Indices()...)
-	result, err := svc.SearchSource(src).Do(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("elasticsearch request failed: %w", err)
-	}
-
+func mapSearchResult(result *elastic.SearchResult) (*Result, error) {
 	var hits []map[string]interface{}
 	for _, hit := range result.Hits.Hits {
 		var source map[string]interface{}
@@ -142,4 +135,44 @@ func (b *ElasticBackend) Execute(ctx context.Context, builder *QueryBuilder) (*R
 		Sorting:       nil,
 		Aggregations:  make(map[string][]*ResultBucket),
 	}, nil
+}
+
+// Execute an Elasticsearch query
+func (b *ElasticBackend) Execute(ctx context.Context, builder *QueryBuilder) (*Result, error) {
+	src := builder.Build()
+	svc := b.client.Search(builder.Indices()...)
+	result, err := svc.SearchSource(src).Do(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch request failed: %w", err)
+	}
+
+	return mapSearchResult(result)
+}
+
+func (b *ElasticBackend) ExecuteMultiple(ctx context.Context, builders []*QueryBuilder) ([]*Result, error) {
+	svc := b.client.MultiSearch()
+	for _, builder := range builders {
+		svc = svc.Add(elastic.NewSearchRequest().SearchSource(builder.Build()).Index(builder.Indices()...))
+	}
+
+	result, err := svc.Do(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch request failed: %w", err)
+	}
+
+	if len(result.Responses) != len(builders) {
+		return nil, errors.New("elasticsearch request failed: number of responses does not match number of requests")
+	}
+
+	results := make([]*Result, 0, len(result.Responses))
+	for _, res := range result.Responses {
+		mres, err := mapSearchResult(res)
+		if err != nil {
+			return nil, fmt.Errorf("elasticsearch request failed: %w", err)
+		}
+
+		results = append(results, mres)
+	}
+
+	return results, nil
 }

@@ -20,6 +20,7 @@ type Feature interface {
 // search engine
 type Backend interface {
 	Execute(context.Context, *QueryBuilder) (*Result, error)
+	ExecuteMultiple(context.Context, []*QueryBuilder) ([]*Result, error)
 }
 
 // Endpoint defines an entry point for a specific search
@@ -77,4 +78,25 @@ func (e *Endpoint) Execute(ctx context.Context, request *Request) (*Result, erro
 	result.request = request
 	result.Duration = time.Since(start)
 	return result, nil
+}
+
+func (e *Endpoint) ExecuteMultiple(ctx context.Context, requests []*Request) ([]*Result, error) {
+	queryBuilders := make([]*QueryBuilder, 0, len(requests))
+	for _, req := range requests {
+		builder := NewQueryBuilder(req, e.indices...)
+
+		cc := &callchain{}
+		for _, feature := range e.features {
+			cc.add(feature)
+		}
+
+		queryBuilders = append(queryBuilders, builder)
+	}
+
+	results, err := e.backend.ExecuteMultiple(ctx, queryBuilders)
+	if err != nil {
+		return nil, fmt.Errorf("backend failed executing requests: %w", err)
+	}
+
+	return results, nil
 }
