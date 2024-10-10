@@ -2,44 +2,101 @@ package featureset
 
 import (
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/olivere/elastic/v7"
 	"github.com/reveald/reveald"
 )
 
-type DateHistogramInterval string
+type (
+	DateCalendarHistogramInterval string
+	DateFixedHistogramInterval    string
+)
 
 const (
-	DateIntervalYearly  DateHistogramInterval = "year"
-	DateIntervalMonthly DateHistogramInterval = "month"
-	DateIntervalDaily   DateHistogramInterval = "day"
+	DateCalendarIntervalYearly  DateCalendarHistogramInterval = "year"
+	DateCalendarIntervalMonthly DateCalendarHistogramInterval = "month"
+	DateCalendarIntervalDaily   DateCalendarHistogramInterval = "day"
+
+	DateFixedIntervalDaily        DateFixedHistogramInterval = "1d"
+	DateFixedIntervalHours        DateFixedHistogramInterval = "1h"
+	DateFixedIntervalMinutes      DateFixedHistogramInterval = "1m"
+	DateFixedIntervalSeconds      DateFixedHistogramInterval = "1s"
+	DateFixedIntervalMilliseconds DateFixedHistogramInterval = "1ms"
+)
+
+const (
+	IntervalFixed    = "fixed"
+	IntervalCalendar = "calendar"
 )
 
 type DateHistogramFeature struct {
-	property   string
-	interval   DateHistogramInterval
-	dateFormat string
+	property      string
+	interval      string
+	dateFormat    string
+	zerobucket    bool
+	applyInterval func(*elastic.DateHistogramAggregation) *elastic.DateHistogramAggregation
 }
 
-func NewDateHistogramFeature(property string, interval DateHistogramInterval) *DateHistogramFeature {
-	dateFormat := "2006"
+type DateHistogramOption func(*DateHistogramFeature)
 
-	switch interval {
-	case DateIntervalYearly:
-		dateFormat = "2006"
-	case DateIntervalMonthly:
-		dateFormat = "2006-01"
-	case DateIntervalDaily:
-		dateFormat = "2006-01-02"
+func WithoutDateHistogramZeroBucket() DateHistogramOption {
+	return func(dhf *DateHistogramFeature) {
+		dhf.zerobucket = false
+	}
+}
+
+func WithFixedInterval(interval DateFixedHistogramInterval) DateHistogramOption {
+	return func(dhf *DateHistogramFeature) {
+		dhf.interval = string(interval)
+		switch interval {
+		case DateFixedIntervalDaily:
+			dhf.dateFormat = "yyyy-MM-dd"
+		case DateFixedIntervalHours:
+			dhf.dateFormat = "yyyy-MM-dd HH"
+		case DateFixedIntervalMinutes:
+			dhf.dateFormat = "yyyy-MM-dd HH:mm"
+		case DateFixedIntervalSeconds:
+			dhf.dateFormat = "yyyy-MM-dd HH:mm:ss"
+		case DateFixedIntervalMilliseconds:
+			dhf.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+		}
+		dhf.applyInterval = func(agg *elastic.DateHistogramAggregation) *elastic.DateHistogramAggregation {
+			return agg.FixedInterval(string(interval))
+		}
+	}
+}
+
+func WithCalendarInterval(interval DateCalendarHistogramInterval) DateHistogramOption {
+	return func(dhf *DateHistogramFeature) {
+		dhf.interval = string(interval)
+		switch interval {
+		case DateCalendarIntervalYearly:
+			dhf.dateFormat = "yyyy"
+		case DateCalendarIntervalMonthly:
+			dhf.dateFormat = "yyyy-MM"
+		case DateCalendarIntervalDaily:
+			dhf.dateFormat = "yyyy-MM-dd"
+		}
+		dhf.applyInterval = func(agg *elastic.DateHistogramAggregation) *elastic.DateHistogramAggregation {
+			return agg.CalendarInterval(string(interval))
+		}
+	}
+}
+
+func NewDateHistogramFeature(property string, opts ...DateHistogramOption) *DateHistogramFeature {
+	dhf := &DateHistogramFeature{
+		property:   property,
+		zerobucket: true,
 	}
 
-	return &DateHistogramFeature{
-		property,
-		interval,
-		dateFormat,
+	WithCalendarInterval(DateCalendarIntervalDaily)(dhf)
+
+	for _, opt := range opts {
+		opt(dhf)
 	}
+
+	return dhf
 }
 
 func (dhf *DateHistogramFeature) Process(builder *reveald.QueryBuilder, next reveald.FeatureFunc) (*reveald.Result, error) {
@@ -55,28 +112,31 @@ func (dhf *DateHistogramFeature) Process(builder *reveald.QueryBuilder, next rev
 
 func (dhf *DateHistogramFeature) build(builder *reveald.QueryBuilder) {
 	builder.Aggregation(dhf.property,
-		elastic.NewDateHistogramAggregation().
-			Field(dhf.property).
-			FixedInterval(string(dhf.interval)).
-			MinDocCount(0))
+		dhf.applyInterval(
+			elastic.NewDateHistogramAggregation().
+				Field(dhf.property).
+				Format(dhf.dateFormat).
+				MinDocCount(0),
+		))
 
 	p, err := builder.Request().Get(dhf.property)
-	if err != nil || !p.IsRangeValue() {
+	if err != nil {
 		return
 	}
 
-	q := elastic.NewRangeQuery(dhf.property)
-	mx, ok := p.Max()
-	max, err := asTime(mx, dhf.dateFormat)
-	if ok && err == nil {
-		q.Lte(max)
+	value := p.Value()
+
+	startValue, err := ParseTimeFrom(value, dhf.interval)
+	if err != nil {
+		return
 	}
 
-	mn, ok := p.Min()
-	min, err := asTime(mn, dhf.dateFormat)
-	if ok && err == nil && min.Before(max) {
-		q.Gte(min)
-	}
+	endValue := IntervalEnd(startValue, dhf.interval)
+
+	q := elastic.NewRangeQuery(dhf.property)
+
+	q.Gte(startValue)
+	q.Lte(endValue)
 
 	builder.With(q)
 }
@@ -89,8 +149,12 @@ func (dhf *DateHistogramFeature) handle(result *reveald.Result) (*reveald.Result
 
 	var buckets []*reveald.ResultBucket
 	for _, bucket := range agg.Buckets {
+		if bucket.DocCount == 0 && !dhf.zerobucket {
+			continue
+		}
 		buckets = append(buckets, &reveald.ResultBucket{
-			Value:    bucket.Key,
+			Value: *bucket.KeyAsString,
+
 			HitCount: bucket.DocCount,
 		})
 	}
@@ -99,10 +163,48 @@ func (dhf *DateHistogramFeature) handle(result *reveald.Result) (*reveald.Result
 	return result, nil
 }
 
-func asTime(raw float64, format string) (time.Time, error) {
-	if raw < 0 {
-		return time.Time{}, errors.New("time value not available")
+func IntervalEnd(t time.Time, interval string) time.Time {
+	switch interval {
+	case string(DateCalendarIntervalYearly):
+		return t.AddDate(1, 0, 0)
+	case string(DateCalendarIntervalMonthly):
+		return t.AddDate(0, 1, 0)
+	case string(DateCalendarIntervalDaily):
+		return t.AddDate(0, 0, 1)
+	case string(DateFixedIntervalDaily):
+		return t.AddDate(0, 0, 1)
+	case string(DateFixedIntervalHours):
+		return t.Add(time.Hour)
+	case string(DateFixedIntervalMinutes):
+		return t.Add(time.Minute)
+	case string(DateFixedIntervalSeconds):
+		return t.Add(time.Second)
+	case string(DateFixedIntervalMilliseconds):
+		return t.Add(time.Millisecond)
 	}
 
-	return time.Parse(format, fmt.Sprintf("%.0f", raw))
+	return t
+}
+
+func ParseTimeFrom(d string, interval string) (time.Time, error) {
+	switch interval {
+	case string(DateCalendarIntervalYearly):
+		return time.Parse("2006", d)
+	case string(DateCalendarIntervalMonthly):
+		return time.Parse("2006-01", d)
+	case string(DateCalendarIntervalDaily):
+		return time.Parse("2006-01-02", d)
+	case string(DateFixedIntervalDaily):
+		return time.Parse("2006-01-02", d)
+	case string(DateFixedIntervalHours):
+		return time.Parse("2006-01-02 15", d)
+	case string(DateFixedIntervalMinutes):
+		return time.Parse("2006-01-02 15:04", d)
+	case string(DateFixedIntervalSeconds):
+		return time.Parse("2006-01-02 15:04:05", d)
+	case string(DateFixedIntervalMilliseconds):
+		return time.Parse("2006-01-02 15:04:05.000", d)
+	}
+
+	return time.Time{}, errors.New("invalid date format")
 }
