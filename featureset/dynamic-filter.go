@@ -9,25 +9,49 @@ import (
 )
 
 type DynamicFilterFeature struct {
-	property string
-	nested   bool
-	agg      AggregationFeature
+	property   string
+	nested     bool
+	agg        AggregationFeature
+	ignoreSelf bool
 }
 
-func NewDynamicFilterFeature(property string, opts ...AggregationOption) *DynamicFilterFeature {
-	return &DynamicFilterFeature{
-		property: property,
-		nested:   false,
-		agg:      buildAggregationFeature(opts...),
+type DynamicFilterFeatureOption func(*DynamicFilterFeature)
+
+func WithIgnoreSelf(ignoreSelf bool) DynamicFilterFeatureOption {
+	return func(dff *DynamicFilterFeature) {
+		dff.ignoreSelf = ignoreSelf
 	}
 }
 
-func NewNestedDocumentFilterFeature(property string, opts ...AggregationOption) *DynamicFilterFeature {
-	return &DynamicFilterFeature{
-		property: property,
-		nested:   true,
-		agg:      buildAggregationFeature(opts...),
+func WithAggregationOption(opts ...AggregationOption) DynamicFilterFeatureOption {
+	return func(dff *DynamicFilterFeature) {
+		dff.agg = buildAggregationFeature(opts...)
 	}
+}
+
+func WithNested(nested bool) DynamicFilterFeatureOption {
+	return func(dff *DynamicFilterFeature) {
+		dff.nested = nested
+	}
+}
+
+func NewDynamicFilterFeature(property string, opts ...DynamicFilterFeatureOption) *DynamicFilterFeature {
+	dff := &DynamicFilterFeature{
+		property:   property,
+		nested:     false,
+		agg:        buildAggregationFeature(),
+		ignoreSelf: true,
+	}
+
+	for _, opt := range opts {
+		opt(dff)
+	}
+
+	return dff
+}
+
+func NewNestedDocumentFilterFeature(property string, opts ...DynamicFilterFeatureOption) *DynamicFilterFeature {
+	return NewDynamicFilterFeature(property, append(opts, WithNested(true))...)
 }
 
 func (dff *DynamicFilterFeature) Process(builder *reveald.QueryBuilder, next reveald.FeatureFunc) (*reveald.Result, error) {
@@ -44,15 +68,31 @@ func (dff *DynamicFilterFeature) Process(builder *reveald.QueryBuilder, next rev
 func (dff *DynamicFilterFeature) build(builder *reveald.QueryBuilder) {
 	keyword := fmt.Sprintf("%s.keyword", dff.property)
 
-	if !dff.nested {
+	if !dff.nested && dff.ignoreSelf {
 		builder.Aggregation(dff.property,
 			elastic.NewTermsAggregation().Field(keyword).Size(dff.agg.size))
-	} else {
+	} else if !dff.nested && !dff.ignoreSelf {
+
+		// Make a copy of the query to avoid modifying the original
+		// and also avoid getting self when we're updating the root query later on
+		copiedQuery, ok := builder.RawQuery().(*elastic.BoolQuery)
+		if !ok {
+			return
+		}
+		rootCopy := *copiedQuery
+
+		termsAgg := elastic.NewTermsAggregation().Field(keyword).Size(dff.agg.size)
+		filterAgg := elastic.NewFilterAggregation().Filter(&rootCopy)
+		filterAgg.SubAggregation(dff.property, termsAgg)
+		globalAgg := elastic.NewGlobalAggregation().SubAggregation(dff.property, filterAgg)
+		builder.Aggregation(dff.property, globalAgg)
+	} else if dff.nested && !dff.ignoreSelf {
 		path := strings.Split(dff.property, ".")[0]
 		builder.Aggregation(dff.property,
 			elastic.NewNestedAggregation().
 				Path(path).
-				SubAggregation(dff.property, elastic.NewTermsAggregation().Field(keyword).Size(dff.agg.size)))
+				SubAggregation(dff.property,
+					elastic.NewTermsAggregation().Field(keyword).Size(dff.agg.size)))
 	}
 
 	if builder.Request().Has(dff.property) {
@@ -83,7 +123,17 @@ func (dff *DynamicFilterFeature) handle(result *reveald.Result) (*reveald.Result
 		if !ok {
 			return result, nil
 		}
+		if !dff.ignoreSelf {
+			items, ok = items.Aggregations.Terms(dff.property)
+			if !ok {
+				return result, nil
+			}
 
+			items, ok = items.Aggregations.Terms(dff.property)
+			if !ok {
+				return result, nil
+			}
+		}
 		agg = items
 	} else {
 		bucket, ok := result.RawResult().Aggregations.Children(dff.property)
