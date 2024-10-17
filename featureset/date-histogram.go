@@ -124,21 +124,27 @@ func (dhf *DateHistogramFeature) build(builder *reveald.QueryBuilder) {
 		return
 	}
 
-	value := p.Value()
+	bq := elastic.NewBoolQuery()
 
-	startValue, err := ParseTimeFrom(value, dhf.interval)
-	if err != nil {
-		return
+	for _, v := range p.Values() {
+
+		startValue, err := ParseTimeFrom(v, dhf.interval)
+		if err != nil {
+			return
+		}
+		endValue := IntervalEnd(startValue, dhf.interval)
+
+		q := elastic.NewRangeQuery(dhf.property)
+
+		q.Gte(startValue)
+		q.Lte(endValue)
+
+		bq = bq.Should(q)
 	}
 
-	endValue := IntervalEnd(startValue, dhf.interval)
+	bq = bq.MinimumShouldMatch("1")
 
-	q := elastic.NewRangeQuery(dhf.property)
-
-	q.Gte(startValue)
-	q.Lte(endValue)
-
-	builder.With(q)
+	builder.With(bq)
 }
 
 func (dhf *DateHistogramFeature) handle(result *reveald.Result) (*reveald.Result, error) {
