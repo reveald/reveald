@@ -2,6 +2,7 @@ package featureset
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/olivere/elastic/v7"
@@ -84,6 +85,12 @@ func WithCalendarInterval(interval DateCalendarHistogramInterval) DateHistogramO
 	}
 }
 
+func WithRangeDateFormat(dateFormat string) DateHistogramOption {
+	return func(dhf *DateHistogramFeature) {
+		dhf.dateFormat = dateFormat
+	}
+}
+
 func NewDateHistogramFeature(property string, opts ...DateHistogramOption) *DateHistogramFeature {
 	dhf := &DateHistogramFeature{
 		property:   property,
@@ -152,6 +159,12 @@ func (dhf *DateHistogramFeature) handle(result *reveald.Result) (*reveald.Result
 	if !ok {
 		return result, nil
 	}
+	testagg, ok := result.RawResult().Aggregations.DateRange(dhf.property)
+	if !ok {
+		return result, nil
+	}
+
+	fmt.Println(testagg)
 
 	var buckets []*reveald.ResultBucket
 	for _, bucket := range agg.Buckets {
