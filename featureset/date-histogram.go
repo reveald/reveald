@@ -2,7 +2,6 @@ package featureset
 
 import (
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/olivere/elastic/v7"
@@ -159,12 +158,6 @@ func (dhf *DateHistogramFeature) handle(result *reveald.Result) (*reveald.Result
 	if !ok {
 		return result, nil
 	}
-	testagg, ok := result.RawResult().Aggregations.DateRange(dhf.property)
-	if !ok {
-		return result, nil
-	}
-
-	fmt.Println(testagg)
 
 	var buckets []*reveald.ResultBucket
 	for _, bucket := range agg.Buckets {
