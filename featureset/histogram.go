@@ -1,12 +1,22 @@
 package featureset
 
 import (
-	"fmt"
-
-	"github.com/olivere/elastic/v7"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 	"github.com/reveald/reveald"
 )
 
+// HistogramFeature creates a histogram aggregation for numeric fields.
+//
+// It groups documents based on numeric field values into buckets and
+// can also apply range filters based on request parameters.
+//
+// Example:
+//
+//	// Create a basic histogram feature for the "price" field
+//	histogramFeature := featureset.NewHistogramFeature("price")
+//
+//	// Use the histogram feature in a feature chain
+//	result, err := histogramFeature.Process(builder, nextFeature)
 type HistogramFeature struct {
 	property    string
 	neg         bool
@@ -15,32 +25,83 @@ type HistogramFeature struct {
 	minDocCount int64
 }
 
+// HistogramOption is a functional option for configuring a HistogramFeature.
 type HistogramOption func(*HistogramFeature)
 
+// WithNegativeValuesAllowed enables support for negative values in the histogram.
+//
+// By default, negative values are filtered out.
+//
+// Example:
+//
+//	// Create a histogram feature that allows negative values
+//	histogramFeature := featureset.NewHistogramFeature("price",
+//	    featureset.WithNegativeValuesAllowed(),
+//	)
 func WithNegativeValuesAllowed() HistogramOption {
 	return func(hf *HistogramFeature) {
 		hf.neg = true
 	}
 }
 
+// WithoutZeroBucket disables the creation of a bucket for zero values.
+//
+// By default, a bucket for zero values is created.
+//
+// Example:
+//
+//	// Create a histogram feature without a zero bucket
+//	histogramFeature := featureset.NewHistogramFeature("price",
+//	    featureset.WithoutZeroBucket(),
+//	)
 func WithoutZeroBucket() HistogramOption {
 	return func(hf *HistogramFeature) {
 		hf.zeroBucket = false
 	}
 }
 
+// WithInterval sets the interval size for the histogram buckets.
+//
+// The interval determines the size of each bucket in the histogram.
+//
+// Example:
+//
+//	// Create a histogram feature with an interval of 50
+//	histogramFeature := featureset.NewHistogramFeature("price",
+//	    featureset.WithInterval(50),
+//	)
 func WithInterval(interval float64) HistogramOption {
 	return func(hf *HistogramFeature) {
 		hf.interval = interval
 	}
 }
 
+// WithMinimumDocumentCount sets the minimum number of documents required for a bucket to be included.
+//
+// Buckets with fewer documents than this threshold will be excluded from the results.
+//
+// Example:
+//
+//	// Create a histogram feature that only includes buckets with at least 5 documents
+//	histogramFeature := featureset.NewHistogramFeature("price",
+//	    featureset.WithMinimumDocumentCount(5),
+//	)
 func WithMinimumDocumentCount(minDocCount int64) HistogramOption {
 	return func(hf *HistogramFeature) {
 		hf.minDocCount = minDocCount
 	}
 }
 
+// NewHistogramFeature creates a new histogram feature for the specified property.
+//
+// Example:
+//
+//	// Create a histogram feature with custom settings
+//	histogramFeature := featureset.NewHistogramFeature("price",
+//	    featureset.WithInterval(50),
+//	    featureset.WithMinimumDocumentCount(5),
+//	    featureset.WithNegativeValuesAllowed(),
+//	)
 func NewHistogramFeature(property string, opts ...HistogramOption) *HistogramFeature {
 	hf := &HistogramFeature{
 		property:    property,
@@ -57,6 +118,15 @@ func NewHistogramFeature(property string, opts ...HistogramOption) *HistogramFea
 	return hf
 }
 
+// Process applies the histogram aggregation to the query builder and processes the result.
+//
+// It adds a histogram aggregation to the query and processes any range filters
+// from the request parameters.
+//
+// Example:
+//
+//	// Use the histogram feature in a feature chain
+//	result, err := histogramFeature.Process(builder, nextFeature)
 func (hf *HistogramFeature) Process(builder *reveald.QueryBuilder, next reveald.FeatureFunc) (*reveald.Result, error) {
 	hf.build(builder)
 
@@ -68,69 +138,107 @@ func (hf *HistogramFeature) Process(builder *reveald.QueryBuilder, next reveald.
 	return hf.handle(r)
 }
 
+// build adds the histogram aggregation to the query builder.
 func (hf *HistogramFeature) build(builder *reveald.QueryBuilder) {
-	builder.Aggregation(hf.property,
-		elastic.NewHistogramAggregation().
-			Field(hf.property).
-			Interval(hf.interval).
-			MinDocCount(hf.minDocCount))
+	// Create histogram aggregation directly with typed objects
+	field := hf.property
+	interval := types.Float64(float64(hf.interval))
+	minDocCount := int(hf.minDocCount)
 
+	histAgg := types.Aggregations{
+		Histogram: &types.HistogramAggregation{
+			Field:       &field,
+			Interval:    &interval,
+			MinDocCount: &minDocCount,
+		},
+	}
+
+	builder.Aggregation(hf.property, histAgg)
+
+	// Check if we need to add a range query
 	p, err := builder.Request().Get(hf.property)
 	if err != nil || !p.IsRangeValue() {
 		return
 	}
 
-	q := elastic.NewRangeQuery(hf.property)
-	max, wmax := p.Max()
-	if wmax && (max >= 0 || hf.neg) {
-		q.Lte(max)
+	// Create a range query directly with typed objects
+	var numRangeQuery types.NumberRangeQuery
+
+	// Get max value if available
+	maxVal, hasMax := p.Max()
+	if hasMax && (maxVal >= 0 || hf.neg) {
+		lteValue := types.Float64(maxVal)
+		numRangeQuery.Lte = &lteValue
 	}
 
-	min, wmin := p.Min()
-	if wmin && (!wmax || min <= max) && (min >= 0 || hf.neg) {
-		q.Gte(min)
+	// Get min value if available
+	minVal, hasMin := p.Min()
+	if hasMin && (!hasMax || minVal <= maxVal) && (minVal >= 0 || hf.neg) {
+		gteValue := types.Float64(minVal)
+		numRangeQuery.Gte = &gteValue
 	}
 
-	builder.With(q)
+	// Only add the range query if we have constraints
+	if numRangeQuery.Lte != nil || numRangeQuery.Gte != nil {
+		rangeQuery := types.Query{
+			Range: map[string]types.RangeQuery{
+				hf.property: &numRangeQuery,
+			},
+		}
+
+		builder.With(rangeQuery)
+	}
 }
 
+// handle processes the histogram aggregation results.
 func (hf *HistogramFeature) handle(result *reveald.Result) (*reveald.Result, error) {
-	agg, ok := result.RawResult().Aggregations.Histogram(hf.property)
-	if !ok {
+	// Extract histogram buckets from aggregations
+	buckets, ok := result.Aggregations[hf.property]
+	if !ok || len(buckets) == 0 {
 		return result, nil
 	}
 
-	var buckets []*reveald.ResultBucket
-	zeroOut := len(agg.Buckets) > 0
-	for _, bucket := range agg.Buckets {
+	var resultBuckets []*reveald.ResultBucket
+	zeroOut := len(buckets) > 0
+
+	for _, bucket := range buckets {
 		if bucket == nil {
 			continue
 		}
 
-		if bucket.Key <= 0 {
+		// Try to convert key to float64 for checks
+		keyValue, keyFloat := 0.0, false
+		switch v := bucket.Value.(type) {
+		case float64:
+			keyValue, keyFloat = v, true
+		case int:
+			keyValue, keyFloat = float64(v), true
+		case int64:
+			keyValue, keyFloat = float64(v), true
+		}
+
+		if keyFloat && keyValue <= 0 {
 			zeroOut = false
 		}
 
-		if bucket.Key == 0 && !hf.zeroBucket && bucket.DocCount == 0 {
+		if keyFloat && keyValue == 0 && !hf.zeroBucket && bucket.HitCount == 0 {
 			continue
 		}
 
-		buckets = append(buckets, &reveald.ResultBucket{
-			Value:    fmt.Sprintf("%0.f", bucket.Key),
-			HitCount: bucket.DocCount,
-		})
+		resultBuckets = append(resultBuckets, bucket)
 	}
 
+	// Add zero bucket if needed
 	if hf.zeroBucket && zeroOut {
 		bucket := &reveald.ResultBucket{
 			Value:    0,
 			HitCount: 0,
 		}
-		buckets = append(buckets, nil)
-		copy(buckets[1:], buckets)
-		buckets[0] = bucket
+		resultBuckets = append(resultBuckets, nil)
+		copy(resultBuckets[1:], resultBuckets)
+		resultBuckets[0] = bucket
 	}
 
-	result.Aggregations[hf.property] = buckets
+	result.Aggregations[hf.property] = resultBuckets
 	return result, nil
 }

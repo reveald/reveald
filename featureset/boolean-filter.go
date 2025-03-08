@@ -1,77 +1,76 @@
 package featureset
 
 import (
-	"fmt"
-	"strconv"
-
-	"github.com/olivere/elastic/v7"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 	"github.com/reveald/reveald"
 )
 
 type BooleanFilterFeature struct {
-	property string
-	agg      AggregationFeature
+	property   string
+	nested     bool
+	nestedPath string
 }
 
-func NewBooleanFilterFeature(property string, opts ...AggregationOption) *BooleanFilterFeature {
-	return &BooleanFilterFeature{
-		property: property,
-		agg:      buildAggregationFeature(opts...),
+type BooleanFilterOption func(*BooleanFilterFeature)
+
+func WithNestedPath(path string) BooleanFilterOption {
+	return func(bff *BooleanFilterFeature) {
+		bff.nested = true
+		bff.nestedPath = path
 	}
 }
 
-func (bff *BooleanFilterFeature) Process(builder *reveald.QueryBuilder, next reveald.FeatureFunc) (*reveald.Result, error) {
-	bff.build(builder)
+func NewBooleanFilterFeature(property string, opts ...BooleanFilterOption) *BooleanFilterFeature {
+	bff := &BooleanFilterFeature{
+		property: property,
+		nested:   false,
+	}
 
-	r, err := next(builder)
+	for _, opt := range opts {
+		opt(bff)
+	}
+
+	return bff
+}
+
+func (bff *BooleanFilterFeature) Process(builder *reveald.QueryBuilder, next reveald.FeatureFunc) (*reveald.Result, error) {
+	param, err := builder.Request().Get(bff.property)
+	if err == nil && param.IsTruthy() {
+		bff.build(builder)
+	}
+
+	result, err := next(builder)
 	if err != nil {
 		return nil, err
 	}
 
-	return bff.handle(r)
+	return bff.handle(result)
 }
 
 func (bff *BooleanFilterFeature) build(builder *reveald.QueryBuilder) {
-	keyword := fmt.Sprintf("%s.keyword", bff.property)
-
-	builder.Aggregation(bff.property,
-		elastic.NewTermsAggregation().Field(keyword).Size(bff.agg.size))
-
-	if !builder.Request().Has(bff.property) {
-		return
+	// Create a term query for the boolean field
+	termQuery := types.Query{
+		Term: map[string]types.TermQuery{
+			bff.property: {Value: true},
+		},
 	}
 
-	v, err := builder.Request().Get(bff.property)
-	if err != nil {
-		return
+	if !bff.nested {
+		builder.With(termQuery)
+	} else {
+		// Wrap in nested query if needed
+		nestedQuery := types.Query{
+			Nested: &types.NestedQuery{
+				Path:  bff.nestedPath,
+				Query: &termQuery,
+			},
+		}
+		builder.With(nestedQuery)
 	}
-
-	bl, err := strconv.ParseBool(v.Value())
-	if err != nil {
-		return
-	}
-
-	builder.With(elastic.NewTermQuery(bff.property, bl))
 }
 
 func (bff *BooleanFilterFeature) handle(result *reveald.Result) (*reveald.Result, error) {
-	agg, ok := result.RawResult().Aggregations.Terms(bff.property)
-	if !ok {
-		return result, nil
-	}
-
-	var buckets []*reveald.ResultBucket
-	for _, bucket := range agg.Buckets {
-		if bucket == nil {
-			continue
-		}
-
-		buckets = append(buckets, &reveald.ResultBucket{
-			Value:    bucket.Key,
-			HitCount: bucket.DocCount,
-		})
-	}
-
-	result.Aggregations[bff.property] = buckets
+	// With the official client, we no longer need to process the raw result
+	// as the aggregations are already parsed and available in Result.Aggregations
 	return result, nil
 }

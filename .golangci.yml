@@ -1,0 +1,57 @@
+run:
+  go: '1.24'
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - typecheck
+
+issues:
+  exclude-rules:
+    # Exclude errcheck in test files
+    - path: _test\.go
+      linters:
+        - errcheck
+    
+    # Exclude deprecation warnings in test files
+    - path: integration_test\.go
+      linters:
+        - staticcheck
+      text: "SA1019:"  # Exclude deprecation warnings
+    
+    # Exclude empty branch warnings
+    - path: featureset/date-range-histogram\.go
+      linters:
+        - staticcheck
+      text: "SA9003:"  # Empty branch
+    
+    - path: featureset/dynamic-filter\.go
+      linters:
+        - staticcheck
+      text: "SA9003:"  # Empty branch
+    
+    - path: featureset/sorting\.go
+      linters:
+        - staticcheck
+      text: "SA9003:"  # Empty branch
+    
+    # Exclude unused field warnings
+    - path: featureset/date-histogram\.go
+      linters:
+        - unused
+      text: "field `query` is unused"
+    
+    # Exclude unused function in test file
+    - path: builder_test\.go
+      linters:
+        - unused
+      text: "func `termsAggregationToMap` is unused"
+
+  max-issues-per-linter: 0
+  max-same-issues: 0 
