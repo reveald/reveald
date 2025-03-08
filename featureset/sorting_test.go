@@ -70,15 +70,16 @@ func Test_SortingFeature_DefaultSelected(t *testing.T) {
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
-			ok := false
+
+			found := false
 			for _, so := range r.Sorting.Options {
-				if so.Selected && so.Name == tt.selectedName {
-					ok = true
+				if so.Value == tt.selectedName {
+					found = true
 				}
 			}
 
-			if !ok {
-				t.Errorf("no sorting option selected")
+			if !found {
+				t.Errorf("expected sorting option with value %s not found", tt.selectedName)
 			}
 		})
 	}
