@@ -485,7 +485,7 @@ func (qb *QueryBuilder) RawQuery() *types.Query {
 //	})
 func (qb *QueryBuilder) WithScriptedField(field string, script *types.Script) {
 	qb.scriptFields[field] = types.ScriptField{
-		Script: script,
+		Script: *script,
 	}
 }
 

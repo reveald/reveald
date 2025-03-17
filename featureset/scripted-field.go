@@ -21,12 +21,10 @@ func (sff *ScriptedFieldFeature) Process(builder *reveald.QueryBuilder, next rev
 
 func (sff *ScriptedFieldFeature) build(builder *reveald.QueryBuilder) {
 	// Create script directly with typed objects
-	inlineScript := &types.InlineScript{
-		Source: sff.script,
+	source := sff.script
+	script := &types.Script{
+		Source: &source,
 	}
 
-	// Cast to Script interface (note: using a type assertion is a cleaner approach than JSON marshaling)
-	var script types.Script = inlineScript
-
-	builder.WithScriptedField(sff.fieldName, &script)
+	builder.WithScriptedField(sff.fieldName, script)
 }
