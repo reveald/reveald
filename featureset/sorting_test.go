@@ -59,8 +59,22 @@ func Test_SortingFeature_DefaultSelected(t *testing.T) {
 		req          *reveald.Request
 		selectedName string
 	}{
-		{"request missing param", NewSortingFeature("sort", WithDefaultSortOption("nameAsc"), WithSortOption("nameAsc", "property", true), WithSortOption("nameDesc", "property", false)), reveald.NewRequest(), "nameAsc"},
-		{"request with param", NewSortingFeature("sort", WithDefaultSortOption("nameAsc"), WithSortOption("nameAsc", "property", true), WithSortOption("nameDesc", "property", false)), reveald.NewRequest(reveald.NewParameter("sort", "nameDesc")), "nameDesc"},
+		{
+			"request missing param", NewSortingFeature("sort",
+				WithDefaultSortOption("nameAsc"),
+				WithSortOption("nameAsc", "property", true),
+				WithSortOption("nameDesc", "property", false)),
+			reveald.NewRequest(),
+			"nameAsc",
+		},
+		{
+			"request with param", NewSortingFeature("sort",
+				WithDefaultSortOption("nameAsc"),
+				WithSortOption("nameAsc", "property", true),
+				WithSortOption("nameDesc", "property", false)),
+			reveald.NewRequest(reveald.NewParameter("nameDesc", "desc")),
+			"nameDesc",
+		},
 	}
 
 	for _, tt := range table {
@@ -73,7 +87,7 @@ func Test_SortingFeature_DefaultSelected(t *testing.T) {
 
 			found := false
 			for _, so := range r.Sorting.Options {
-				if so.Value == tt.selectedName {
+				if so.Name == tt.selectedName {
 					found = true
 				}
 			}

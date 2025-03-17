@@ -134,6 +134,8 @@ type ResultSorting struct {
 //	    Value: "price:desc",
 //	}
 type ResultSortingOption struct {
-	Label string
-	Value string
+	Name      string
+	Value     string
+	Ascending bool
+	Selected  bool
 }

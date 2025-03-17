@@ -153,29 +153,22 @@ func (sf *SortingFeature) build(builder *reveald.QueryBuilder) {
 // handle adds sorting information to the result.
 func (sf *SortingFeature) handle(req *reveald.Request, result *reveald.Result) (*reveald.Result, error) {
 	var options []*reveald.ResultSortingOption
-	selectedOption := sf.defaultOption
 
-	// Read the selected option from request
+	selected := sf.defaultOption
 	if req.Has(sf.param) {
-		p, err := req.Get(sf.param)
+		v, err := req.Get(sf.param)
 		if err == nil {
-			selectedOption = p.Value()
+			selected = v.Value()
 		}
 	}
 
-	for k := range sf.options {
-		option := &reveald.ResultSortingOption{
-			Label: k,
-			Value: k, // Use the option key as the value
-		}
-
-		// Mark as selected if it matches the selected option
-		if k == selectedOption {
-			// Note: The ResultSortingOption struct doesn't have a Selected field in the current code.
-			// We'll rely on having the correct Value to identify it in tests
-		}
-
-		options = append(options, option)
+	for k, v := range sf.options {
+		options = append(options, &reveald.ResultSortingOption{
+			Name:      k,
+			Value:     v.property,
+			Ascending: v.ascending,
+			Selected:  selected == k,
+		})
 	}
 
 	result.Sorting = &reveald.ResultSorting{
