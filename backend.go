@@ -147,6 +147,25 @@ func WithHttpClient(httpClient *http.Client) ElasticBackendOption {
 	}
 }
 
+// WithCACert configures a custom CA certificate to use for the http requests to elastic backend.
+//
+// Example:
+//
+//	// Use a custom CA certificate
+//	cert, err := ioutil.ReadFile("ca.crt")
+//	if err != nil {
+//	    // Handle error
+//	}
+//	backend, err := reveald.NewElasticBackend(
+//	    []string{"localhost:9200"},
+//	    reveald.WithCACert(cert),
+//	)
+func WithCACert(cert []byte) ElasticBackendOption {
+	return func(b *ElasticBackend) {
+		b.config.CACert = cert
+	}
+}
+
 // WithRetrier configures a retry strategy to use when a http request to elastic backend fails.
 //
 // Note: The retry logic is different in the official client.
