@@ -130,27 +130,48 @@ func (dhf *DateHistogramFeature) build(builder *reveald.QueryBuilder) {
 		return
 	}
 
-	bq := elastic.NewBoolQuery()
+	// Handle exact value filters
+	if len(p.Values()) > 0 && !p.IsDateRangeValue() {
+		bq := elastic.NewBoolQuery()
 
-	for _, v := range p.Values() {
+		for _, v := range p.Values() {
+			startValue, err := ParseTimeFrom(v, dhf.interval)
+			if err != nil {
+				return
+			}
+			endValue := IntervalEnd(startValue, dhf.interval)
 
-		startValue, err := ParseTimeFrom(v, dhf.interval)
-		if err != nil {
-			return
+			q := elastic.NewRangeQuery(dhf.property)
+			q.Gte(startValue)
+			q.Lte(endValue)
+
+			bq = bq.Should(q)
 		}
-		endValue := IntervalEnd(startValue, dhf.interval)
 
-		q := elastic.NewRangeQuery(dhf.property)
-
-		q.Gte(startValue)
-		q.Lte(endValue)
-
-		bq = bq.Should(q)
+		bq = bq.MinimumShouldMatch("1")
+		builder.With(bq)
+		return
 	}
 
-	bq = bq.MinimumShouldMatch("1")
+	if p.IsDateRangeValue() {
+		bq := elastic.NewBoolQuery()
 
-	builder.With(bq)
+		// Handle min/max range filters
+		q := elastic.NewRangeQuery(dhf.property)
+
+		max, hasMax := p.MaxDate()
+		if hasMax {
+			q.Lte(max)
+		}
+
+		min, hasMin := p.MinDate()
+		if hasMin && (!hasMax || min.Before(max)) {
+			q.Gte(min)
+		}
+
+		bq = bq.Must(q)
+		builder.With(bq)
+	}
 }
 
 func (dhf *DateHistogramFeature) handle(result *reveald.Result) (*reveald.Result, error) {

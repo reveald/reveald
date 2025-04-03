@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -17,12 +18,16 @@ const (
 // in a search query request, defining a document
 // property name along with any possible values
 type Parameter struct {
-	name   string
-	values []string
-	min    float64
-	max    float64
-	wmin   bool
-	wmax   bool
+	name     string
+	values   []string
+	min      float64
+	max      float64
+	minDate  time.Time
+	maxDate  time.Time
+	wmin     bool
+	wmax     bool
+	wminDate bool
+	wmaxDate bool
 }
 
 // NewParameter creates a Parameter based on the
@@ -38,14 +43,25 @@ func NewParameter(name string, values ...string) Parameter {
 
 	for _, v := range values {
 		if strings.HasSuffix(name, "."+RangeMinParameterName) {
+
 			pv.min, err = strconv.ParseFloat(v, 64)
 			pv.wmin = err == nil
 			pv.name = name[:len(name)-len("."+RangeMinParameterName)]
+
+			if !pv.wmin {
+				pv.minDate, err = time.Parse(time.RFC3339, v)
+				pv.wminDate = err == nil
+			}
 		}
 		if strings.HasSuffix(name, "."+RangeMaxParameterName) {
 			pv.max, err = strconv.ParseFloat(v, 64)
 			pv.wmax = err == nil
 			pv.name = name[:len(name)-len("."+RangeMaxParameterName)]
+
+			if !pv.wmax {
+				pv.maxDate, err = time.Parse(time.RFC3339, v)
+				pv.wmaxDate = err == nil
+			}
 		}
 	}
 
@@ -56,6 +72,10 @@ func NewParameter(name string, values ...string) Parameter {
 // name includes at least one range suffix (min/max)
 func (pv Parameter) IsRangeValue() bool {
 	return pv.wmin || pv.wmax
+}
+
+func (pv Parameter) IsDateRangeValue() bool {
+	return pv.wminDate || pv.wmaxDate
 }
 
 // IsTruthy returns truthy for a boolean value
@@ -79,9 +99,19 @@ func (pv Parameter) Min() (float64, bool) {
 	return pv.min, pv.wmin
 }
 
+// MinDate returns the lower range bound for a date range parameter
+func (pv Parameter) MinDate() (time.Time, bool) {
+	return pv.minDate, pv.wminDate
+}
+
 // Max returns the higher range bound for a range parameter
 func (pv Parameter) Max() (float64, bool) {
 	return pv.max, pv.wmax
+}
+
+// MaxDate returns the higher range bound for a date range parameter
+func (pv Parameter) MaxDate() (time.Time, bool) {
+	return pv.maxDate, pv.wmaxDate
 }
 
 // Merge a parameter with another parameter
@@ -92,9 +122,17 @@ func (pv Parameter) Merge(m Parameter) Parameter {
 		pv.min = m.min
 		pv.wmin = true
 	}
+	if pv.minDate.IsZero() && !m.minDate.IsZero() {
+		pv.minDate = m.minDate
+		pv.wminDate = true
+	}
 	if pv.max == 0 && m.max > 0 {
 		pv.max = m.max
 		pv.wmax = true
+	}
+	if pv.maxDate.IsZero() && !m.maxDate.IsZero() {
+		pv.maxDate = m.maxDate
+		pv.wmaxDate = true
 	}
 
 	return pv
