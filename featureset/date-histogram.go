@@ -1,7 +1,6 @@
 package featureset
 
 import (
-	"errors"
 	"time"
 
 	"github.com/olivere/elastic/v7"
@@ -159,12 +158,12 @@ func (dhf *DateHistogramFeature) build(builder *reveald.QueryBuilder) {
 		// Handle min/max range filters
 		q := elastic.NewRangeQuery(dhf.property)
 
-		max, hasMax := p.MaxDate()
+		max, hasMax := p.MaxDate(getDateTimeFormat(dhf.interval))
 		if hasMax {
 			q.Lte(max)
 		}
 
-		min, hasMin := p.MinDate()
+		min, hasMin := p.MinDate(getDateTimeFormat(dhf.interval))
 		if hasMin && (!hasMax || min.Before(max)) {
 			q.Gte(min)
 		}
@@ -220,24 +219,29 @@ func IntervalEnd(t time.Time, interval string) time.Time {
 }
 
 func ParseTimeFrom(d string, interval string) (time.Time, error) {
+	format := getDateTimeFormat(interval)
+	return time.Parse(format, d)
+}
+
+func getDateTimeFormat(interval string) string {
 	switch interval {
 	case string(DateCalendarIntervalYearly):
-		return time.Parse("2006", d)
+		return "2006"
 	case string(DateCalendarIntervalMonthly):
-		return time.Parse("2006-01", d)
+		return "2006-01"
 	case string(DateCalendarIntervalDaily):
-		return time.Parse("2006-01-02", d)
+		return "2006-01-02"
 	case string(DateFixedIntervalDaily):
-		return time.Parse("2006-01-02", d)
+		return "2006-01-02"
 	case string(DateFixedIntervalHours):
-		return time.Parse("2006-01-02 15", d)
+		return "2006-01-02 15"
 	case string(DateFixedIntervalMinutes):
-		return time.Parse("2006-01-02 15:04", d)
+		return "2006-01-02 15:04"
 	case string(DateFixedIntervalSeconds):
-		return time.Parse("2006-01-02 15:04:05", d)
+		return "2006-01-02 15:04:05"
 	case string(DateFixedIntervalMilliseconds):
-		return time.Parse("2006-01-02 15:04:05.000", d)
+		return "2006-01-02 15:04:05.000"
 	}
 
-	return time.Time{}, errors.New("invalid date format")
+	return time.RFC3339
 }
