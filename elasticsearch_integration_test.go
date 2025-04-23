@@ -10,6 +10,7 @@ import (
 
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/elastic/go-elasticsearch/v8/esapi"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types/enums/sortorder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -154,6 +155,42 @@ func indexTestDocuments(t *testing.T, ctx context.Context, client *elasticsearch
 	// Bulk index the products
 	for i, product := range products {
 		productJSON, err := json.Marshal(product)
+		require.NoError(t, err, "Failed to marshal product")
+
+		req := esapi.IndexRequest{
+			Index:      indexName,
+			DocumentID: fmt.Sprintf("product-%d", i+1),
+			Body:       strings.NewReader(string(productJSON)),
+			Refresh:    "true",
+		}
+
+		res, err := req.Do(ctx, client)
+		require.NoError(t, err, "Failed to index document")
+		defer res.Body.Close()
+		require.False(t, res.IsError(), "Error indexing document: %s", res.String())
+	}
+
+	// Ensure documents are indexed by refreshing the index
+	refreshReq := esapi.IndicesRefreshRequest{
+		Index: []string{indexName},
+	}
+	res, err := refreshReq.Do(ctx, client)
+	require.NoError(t, err, "Failed to refresh index")
+	defer res.Body.Close()
+}
+
+// indexTestDocuments indexes test documents
+func indexManyTestDocuments(t *testing.T, ctx context.Context, client *elasticsearch.Client, indexName string, count int) {
+	// Bulk index the products
+	for i := range count {
+		productJSON, err := json.Marshal(Product{
+			Name:        fmt.Sprintf("Laptop %04d", i),
+			Description: "High-performance laptop with 16GB RAM",
+			Price:       100.00 + float64(i),
+			Category:    "electronics",
+			Tags:        []string{"computer", "laptop", "tech"},
+			CreatedAt:   time.Now(),
+		})
 		require.NoError(t, err, "Failed to marshal product")
 
 		req := esapi.IndexRequest{
@@ -390,4 +427,52 @@ func TestElasticsearchAggregations(t *testing.T) {
 
 	// Verify aggregation results
 	assert.NotNil(t, result.Aggregations, "Expected aggregations in result")
+}
+
+// TestElasticsearchPagination demonstrates using pagination
+func TestElasticsearchPagination(t *testing.T) {
+	// Skip in short mode
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Setup Elasticsearch container
+	ctx := context.Background()
+	elasticsearchContainer, esURL := setupElasticsearchContainer(t, ctx)
+	defer terminateContainer(t, ctx, elasticsearchContainer)
+
+	// Create Elasticsearch client
+	esClient, err := createElasticsearchClient(esURL)
+	require.NoError(t, err, "Failed to create Elasticsearch client")
+
+	// Create test index and add documents
+	indexName := "test-products-pagination"
+	createIndex(t, ctx, esClient, indexName)
+	indexManyTestDocuments(t, ctx, esClient, indexName, 50)
+
+	// Create our backend
+	backend, err := NewElasticBackend([]string{esURL})
+	require.NoError(t, err, "Failed to create ElasticBackend")
+
+	// Create a request
+	request := NewRequest()
+
+	// Create a query builder with aggregations
+	builder := NewQueryBuilder(request, indexName)
+
+	builder.WithMatchQuery("category", "electronics")
+	builder.Sort("price", sortorder.Asc)
+	builder.SetSize(10) // Page 2, 10 items per page
+	builder.SetFrom(20)
+
+	// Execute the query
+	result, err := builder.Execute(ctx, backend)
+	require.NoError(t, err, "Failed to execute query with aggregations")
+
+	// Verify pagination results
+	assert.Equal(t, 10, len(result.Hits), "Expected 10 items in result")
+	assert.Equal(t, int64(50), result.TotalHitCount, "Expected 50 total items")
+
+	// Check the first item
+	assert.Equal(t, "Laptop 0020", result.Hits[0]["name"], "Expected first item to be 'Laptop 0020'")
 }
