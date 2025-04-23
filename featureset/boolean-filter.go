@@ -62,7 +62,7 @@ func (bff *BooleanFilterFeature) build(builder *reveald.QueryBuilder) {
 		nestedQuery := types.Query{
 			Nested: &types.NestedQuery{
 				Path:  bff.nestedPath,
-				Query: &termQuery,
+				Query: termQuery,
 			},
 		}
 		builder.With(nestedQuery)

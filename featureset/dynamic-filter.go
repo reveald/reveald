@@ -147,7 +147,7 @@ func (dff *DynamicFilterFeature) build(builder *reveald.QueryBuilder) {
 			nestedQuery := types.Query{
 				Nested: &types.NestedQuery{
 					Path:  path,
-					Query: &types.Query{Bool: &innerBoolQuery},
+					Query: types.Query{Bool: &innerBoolQuery},
 				},
 			}
 
