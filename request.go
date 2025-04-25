@@ -88,11 +88,11 @@ func (pv Parameter) Max() (float64, bool) {
 func (pv Parameter) Merge(m Parameter) Parameter {
 	pv.values = append(pv.values, m.values...)
 
-	if pv.min == 0 && m.min > 0 {
+	if pv.min == 0 && m.wmin {
 		pv.min = m.min
 		pv.wmin = true
 	}
-	if pv.max == 0 && m.max > 0 {
+	if pv.max == 0 && m.wmax {
 		pv.max = m.max
 		pv.wmax = true
 	}
