@@ -138,55 +138,50 @@ func Test_Merge_Values(t *testing.T) {
 
 func Test_Merge_Ranges(t *testing.T) {
 	table := []struct {
-		name     string
-		min      float64
-		max      float64
-		validate func(float64, float64) bool
+		name string
+		min  float64
+		max  float64
 	}{
 		{
 			name: "Positive values",
 			min:  2.0,
 			max:  10.0,
-			validate: func(min, max float64) bool {
-				p1 := NewParameter("p1."+RangeMinParameterName, fmt.Sprintf("%f", min))
-				p2 := NewParameter("p1."+RangeMaxParameterName, fmt.Sprintf("%f", max))
-				p := p1.Merge(p2)
-				v1, wv1 := p.Min()
-				v2, wv2 := p.Max()
-				return assert.Equal(t, min, v1) && assert.Equal(t, max, v2) && assert.True(t, wv1) && assert.True(t, wv2)
-			},
 		},
 		{
 			name: "Negative values",
 			min:  -10.0,
 			max:  -2.0,
-			validate: func(min, max float64) bool {
-				p1 := NewParameter("p1."+RangeMinParameterName, fmt.Sprintf("%f", min))
-				p2 := NewParameter("p1."+RangeMaxParameterName, fmt.Sprintf("%f", max))
-				p := p1.Merge(p2)
-				v1, wv1 := p.Min()
-				v2, wv2 := p.Max()
-				return assert.Equal(t, min, v1) && assert.Equal(t, max, v2) && assert.True(t, wv1) && assert.True(t, wv2)
-			},
 		},
 		{
 			name: "Min and max zero",
 			min:  0.0,
 			max:  0.0,
-			validate: func(min, max float64) bool {
-				p1 := NewParameter("p1."+RangeMinParameterName, fmt.Sprintf("%f", min))
-				p2 := NewParameter("p1."+RangeMaxParameterName, fmt.Sprintf("%f", max))
-				p := p1.Merge(p2)
-				v1, wv1 := p.Min()
-				v2, wv2 := p.Max()
-				return assert.Equal(t, min, v1) && assert.Equal(t, max, v2) && assert.True(t, wv1) && assert.True(t, wv2)
-			},
 		},
 	}
 	for _, tt := range table {
 		t.Run(tt.name, func(t *testing.T) {
-			valid := tt.validate(tt.min, tt.max)
-			assert.True(t, valid)
+			p1 := NewParameter("p1."+RangeMinParameterName, fmt.Sprintf("%f", tt.min))
+			p2 := NewParameter("p1."+RangeMaxParameterName, fmt.Sprintf("%f", tt.max))
+
+			merged := p1.Merge(p2)
+			mergedReversed := p2.Merge(p1)
+
+			// Check that merging order doesn't affect results
+			minVal1, minSet1 := merged.Min()
+			maxVal1, maxSet1 := merged.Max()
+			minVal2, minSet2 := mergedReversed.Min()
+			maxVal2, maxSet2 := mergedReversed.Max()
+
+			assert.Equal(t, minVal1, minVal2, "Min values should be equal regardless of merge order")
+			assert.Equal(t, maxVal1, maxVal2, "Max values should be equal regardless of merge order")
+			assert.Equal(t, minSet1, minSet2, "Min set flags should match regardless of merge order")
+			assert.Equal(t, maxSet1, maxSet2, "Max set flags should match regardless of merge order")
+
+			// Check against expected test values
+			assert.Equal(t, tt.min, minVal1, "Min value does not match expected value")
+			assert.Equal(t, tt.max, maxVal1, "Max value does not match expected value")
+			assert.True(t, minSet1, "Min should be set")
+			assert.True(t, maxSet1, "Max should be set")
 		})
 	}
 
