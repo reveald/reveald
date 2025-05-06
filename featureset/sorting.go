@@ -1,6 +1,7 @@
 package featureset
 
 import (
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types/enums/sortorder"
 	"github.com/reveald/reveald"
 )
 
@@ -142,12 +143,11 @@ func (sf *SortingFeature) build(builder *reveald.QueryBuilder) {
 		return
 	}
 
-	order := "asc"
+	sortOrder := sortorder.Asc
 	if !option.ascending {
-		order = "desc"
+		sortOrder = sortorder.Desc
 	}
-
-	builder.Selection().Update(reveald.WithSort(option.property, order))
+	builder.Sort(option.property, sortOrder)
 }
 
 // handle adds sorting information to the result.

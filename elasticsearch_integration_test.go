@@ -475,4 +475,101 @@ func TestElasticsearchPagination(t *testing.T) {
 
 	// Check the first item
 	assert.Equal(t, "Laptop 0020", result.Hits[0]["name"], "Expected first item to be 'Laptop 0020'")
+
+}
+
+// TestElasticsearchSort demonstrates sorting functionality
+func TestElasticsearchSort(t *testing.T) {
+	// Skip in short mode
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Setup Elasticsearch container
+	ctx := context.Background()
+	elasticsearchContainer, esURL := setupElasticsearchContainer(t, ctx)
+	defer terminateContainer(t, ctx, elasticsearchContainer)
+
+	// Create Elasticsearch client
+	esClient, err := createElasticsearchClient(esURL)
+	require.NoError(t, err, "Failed to create Elasticsearch client")
+
+	// Create test index and add documents
+	indexName := "test-products-pagination"
+	createIndex(t, ctx, esClient, indexName)
+	indexManyTestDocuments(t, ctx, esClient, indexName, 50)
+
+	// Create our backend
+	backend, err := NewElasticBackend([]string{esURL})
+	require.NoError(t, err, "Failed to create ElasticBackend")
+
+	// Create a request
+	request := NewRequest()
+
+	// Create a query builder with aggregations
+	builder := NewQueryBuilder(request, indexName)
+
+	builder.WithMatchQuery("category", "electronics")
+	builder.Sort("price", sortorder.Desc)
+	builder.SetSize(50)
+
+	// Execute the query
+	result, err := builder.Execute(ctx, backend)
+	require.NoError(t, err, "Failed to execute query with aggregations")
+
+	referencePrice := result.Hits[0]["price"].(float64)
+	for i := 1; i < len(result.Hits); i++ {
+		currentPrice := result.Hits[i]["price"].(float64)
+		assert.LessOrEqual(t, currentPrice, referencePrice, "Expected items to be sorted by price in descending order")
+		referencePrice = currentPrice
+	}
+
+}
+
+// TestElasticsearchSort demonstrates sorting functionality
+func TestElasticsearchSortAsc(t *testing.T) {
+	// Skip in short mode
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Setup Elasticsearch container
+	ctx := context.Background()
+	elasticsearchContainer, esURL := setupElasticsearchContainer(t, ctx)
+	defer terminateContainer(t, ctx, elasticsearchContainer)
+
+	// Create Elasticsearch client
+	esClient, err := createElasticsearchClient(esURL)
+	require.NoError(t, err, "Failed to create Elasticsearch client")
+
+	// Create test index and add documents
+	indexName := "test-products-pagination"
+	createIndex(t, ctx, esClient, indexName)
+	indexManyTestDocuments(t, ctx, esClient, indexName, 50)
+
+	// Create our backend
+	backend, err := NewElasticBackend([]string{esURL})
+	require.NoError(t, err, "Failed to create ElasticBackend")
+
+	// Create a request
+	request := NewRequest()
+
+	// Create a query builder with aggregations
+	builder := NewQueryBuilder(request, indexName)
+
+	builder.WithMatchQuery("category", "electronics")
+	builder.Sort("price", sortorder.Asc)
+	builder.SetSize(50)
+
+	// Execute the query
+	result, err := builder.Execute(ctx, backend)
+	require.NoError(t, err, "Failed to execute query with aggregations")
+
+	referencePrice := result.Hits[0]["price"].(float64)
+	for i := 1; i < len(result.Hits); i++ {
+		currentPrice := result.Hits[i]["price"].(float64)
+		assert.GreaterOrEqual(t, currentPrice, referencePrice, "Expected items to be sorted by price in descending order")
+		referencePrice = currentPrice
+	}
+
 }
