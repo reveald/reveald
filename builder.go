@@ -1,7 +1,6 @@
 package reveald
 
 import (
-	"context"
 	"encoding/json"
 	"maps"
 
@@ -344,120 +343,6 @@ func (qb *QueryBuilder) Aggregation(name string, agg types.Aggregations) {
 	qb.aggregations[name] = agg
 }
 
-// WithTermQuery is a convenience method to add a term query to the "must" clause.
-//
-// A term query finds documents that contain the exact term specified in the provided field.
-//
-// Example:
-//
-//	// Find active products
-//	builder.WithTermQuery("active", true)
-//
-//	// Find products in a specific category
-//	builder.WithTermQuery("category", "electronics")
-func (qb *QueryBuilder) WithTermQuery(field string, value any) {
-	termQuery := types.Query{
-		Term: map[string]types.TermQuery{
-			field: {Value: value},
-		},
-	}
-	qb.With(termQuery)
-}
-
-// WithMatchQuery is a convenience method to add a match query to the "must" clause.
-//
-// A match query is a standard query for performing full-text search, including
-// options like fuzziness, operator, etc.
-//
-// Example:
-//
-//	// Find products with "premium" in their description
-//	builder.WithMatchQuery("description", "premium")
-//
-//	// Find products with "wireless headphones" in their name
-//	builder.WithMatchQuery("name", "wireless headphones")
-func (qb *QueryBuilder) WithMatchQuery(field string, value any) {
-	// For string values
-	if stringValue, ok := value.(string); ok {
-		matchQuery := types.Query{
-			Match: map[string]types.MatchQuery{
-				field: {Query: stringValue},
-			},
-		}
-		qb.With(matchQuery)
-		return
-	}
-
-	// For non-string values, use term query
-	qb.WithTermQuery(field, value)
-}
-
-// WithRangeQuery is a convenience method to add a range query to the "must" clause.
-//
-// A range query finds documents with field values within the specified range.
-//
-// Parameters:
-//   - field: The field to query
-//   - gt: Greater than value (exclusive)
-//   - gte: Greater than or equal to value (inclusive)
-//   - lt: Less than value (exclusive)
-//   - lte: Less than or equal to value (inclusive)
-//
-// Example:
-//
-//	// Find products with price >= 50 and < 100
-//	builder.WithRangeQuery("price", nil, 50, 100, nil)
-//
-//	// Find products with rating > 4
-//	builder.WithRangeQuery("rating", 4, nil, nil, nil)
-//
-//	// Find products created before 2023
-//	builder.WithRangeQuery("created_at", nil, nil, nil, "2023-01-01")
-func (qb *QueryBuilder) WithRangeQuery(field string, gt, gte, lt, lte any) {
-	// Convert any values to *types.Float64 if they're not nil
-	var gtFloat, gteFloat, ltFloat, lteFloat *types.Float64
-
-	if gt != nil {
-		if f, ok := gt.(float64); ok {
-			val := types.Float64(f)
-			gtFloat = &val
-		}
-	}
-
-	if gte != nil {
-		if f, ok := gte.(float64); ok {
-			val := types.Float64(f)
-			gteFloat = &val
-		}
-	}
-
-	if lt != nil {
-		if f, ok := lt.(float64); ok {
-			val := types.Float64(f)
-			ltFloat = &val
-		}
-	}
-
-	if lte != nil {
-		if f, ok := lte.(float64); ok {
-			val := types.Float64(f)
-			lteFloat = &val
-		}
-	}
-
-	rangeQuery := types.Query{
-		Range: map[string]types.RangeQuery{
-			field: &types.NumberRangeQuery{
-				Gt:  gtFloat,
-				Gte: gteFloat,
-				Lt:  ltFloat,
-				Lte: lteFloat,
-			},
-		},
-	}
-	qb.With(rangeQuery)
-}
-
 // RawQuery returns the underlying bool query.
 //
 // This can be useful when you need to access or modify the raw query structure.
@@ -523,35 +408,6 @@ func (qb *QueryBuilder) DocvalueFields(docvalueFields ...string) {
 			Field: field,
 		})
 	}
-}
-
-// AddTermsAggregation is a convenience method to add a terms aggregation.
-//
-// Terms aggregations group documents by terms found in a specific field.
-//
-// Parameters:
-//   - name: The name of the aggregation
-//   - field: The field to aggregate on
-//   - size: The maximum number of buckets to return
-//
-// Example:
-//
-//	// Group products by category, returning the top 10 categories
-//	builder.AddTermsAggregation("categories", "category", 10)
-//
-//	// Group products by brand, returning the top 5 brands
-//	builder.AddTermsAggregation("brands", "brand.keyword", 5)
-func (qb *QueryBuilder) AddTermsAggregation(name string, field string, size int) {
-	fieldCopy := field // Create a copy to get address of
-	sizeCopy := size   // Create a copy to get address of
-
-	agg := types.Aggregations{
-		Terms: &types.TermsAggregation{
-			Field: &fieldCopy,
-			Size:  &sizeCopy,
-		},
-	}
-	qb.Aggregation(name, agg)
 }
 
 // Sort adds a sort option to the query.
@@ -666,8 +522,7 @@ func (qb *QueryBuilder) BuildRequest() *search.Request {
 	// Create the search request
 	request := &search.Request{}
 
-	// Add query if we have any conditions
-	if len(qb.boolQuery.Must) > 0 || len(qb.boolQuery.MustNot) > 0 || len(qb.boolQuery.Should) > 0 {
+	if qb.boolQuery != nil {
 		request.Query = &types.Query{
 			Bool: qb.boolQuery,
 		}
@@ -721,25 +576,4 @@ func (qb *QueryBuilder) BuildRequest() *search.Request {
 	}
 
 	return request
-}
-
-// Execute runs the query against the provided Elasticsearch backend and returns the results.
-//
-// This is a convenience method that combines BuildRequest and backend.Execute.
-//
-// Example:
-//
-//	// Execute the query and get results
-//	result, err := builder.Execute(ctx, backend)
-//	if err != nil {
-//	    // Handle error
-//	}
-//
-//	// Process the results
-//	fmt.Printf("Found %d documents\n", result.TotalHitCount)
-//	for _, hit := range result.Hits {
-//	    fmt.Printf("Document: %v\n", hit)
-//	}
-func (qb *QueryBuilder) Execute(ctx context.Context, backend *ElasticBackend) (*Result, error) {
-	return backend.Execute(ctx, qb)
 }

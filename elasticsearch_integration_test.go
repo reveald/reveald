@@ -10,6 +10,7 @@ import (
 
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/elastic/go-elasticsearch/v8/esapi"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types/enums/sortorder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -328,7 +329,13 @@ func testBackendImplementation(t *testing.T, esURL string, indexName string) {
 	builder := NewQueryBuilder(request, indexName)
 
 	// Add a match query for electronics category
-	builder.WithMatchQuery("category", "electronics")
+	builder.With(types.Query{
+		Match: map[string]types.MatchQuery{
+			"category": {
+				Query: "electronics",
+			},
+		},
+	})
 
 	// Execute the query
 	ctx := context.Background()
@@ -368,11 +375,23 @@ func TestElasticsearchMultipleQueries(t *testing.T) {
 	// Create requests and query builders
 	electronicsRequest := NewRequest()
 	electronicsQuery := NewQueryBuilder(electronicsRequest, indexName)
-	electronicsQuery.WithMatchQuery("category", "electronics")
+	electronicsQuery.With(types.Query{
+		Match: map[string]types.MatchQuery{
+			"category": {
+				Query: "electronics",
+			},
+		},
+	})
 
 	accessoriesRequest := NewRequest()
 	accessoriesQuery := NewQueryBuilder(accessoriesRequest, indexName)
-	accessoriesQuery.WithMatchQuery("category", "accessories")
+	accessoriesQuery.With(types.Query{
+		Match: map[string]types.MatchQuery{
+			"category": {
+				Query: "accessories",
+			},
+		},
+	})
 
 	// Execute multiple queries
 	results, err := backend.ExecuteMultiple(ctx, []*QueryBuilder{electronicsQuery, accessoriesQuery})
@@ -416,13 +435,25 @@ func TestElasticsearchAggregations(t *testing.T) {
 	builder := NewQueryBuilder(request, indexName)
 
 	// Add a match all query (using an empty match query as a workaround)
-	builder.WithMatchQuery("_all", "")
+	builder.With(types.Query{
+		Match: map[string]types.MatchQuery{
+			"_all": {
+				Query: "",
+			},
+		},
+	})
 
 	// Add aggregations
-	builder.AddTermsAggregation("categories", "category", 10)
-
+	field := "category"
+	size := 10
+	builder.Aggregation("categories", types.Aggregations{
+		Terms: &types.TermsAggregation{
+			Field: &field,
+			Size:  &size,
+		},
+	})
 	// Execute the query
-	result, err := builder.Execute(ctx, backend)
+	result, err := backend.Execute(ctx, builder)
 	require.NoError(t, err, "Failed to execute query with aggregations")
 
 	// Verify aggregation results
@@ -460,13 +491,19 @@ func TestElasticsearchPagination(t *testing.T) {
 	// Create a query builder with aggregations
 	builder := NewQueryBuilder(request, indexName)
 
-	builder.WithMatchQuery("category", "electronics")
+	builder.With(types.Query{
+		Match: map[string]types.MatchQuery{
+			"category": {
+				Query: "electronics",
+			},
+		},
+	})
 	builder.Sort("price", sortorder.Asc)
 	builder.SetSize(10) // Page 2, 10 items per page
 	builder.SetFrom(20)
 
 	// Execute the query
-	result, err := builder.Execute(ctx, backend)
+	result, err := backend.Execute(ctx, builder)
 	require.NoError(t, err, "Failed to execute query with aggregations")
 
 	// Verify pagination results
@@ -475,7 +512,6 @@ func TestElasticsearchPagination(t *testing.T) {
 
 	// Check the first item
 	assert.Equal(t, "Laptop 0020", result.Hits[0]["name"], "Expected first item to be 'Laptop 0020'")
-
 }
 
 // TestElasticsearchSort demonstrates sorting functionality
@@ -509,12 +545,18 @@ func TestElasticsearchSort(t *testing.T) {
 	// Create a query builder with aggregations
 	builder := NewQueryBuilder(request, indexName)
 
-	builder.WithMatchQuery("category", "electronics")
+	builder.With(types.Query{
+		Match: map[string]types.MatchQuery{
+			"category": {
+				Query: "electronics",
+			},
+		},
+	})
 	builder.Sort("price", sortorder.Desc)
 	builder.SetSize(50)
 
 	// Execute the query
-	result, err := builder.Execute(ctx, backend)
+	result, err := backend.Execute(ctx, builder)
 	require.NoError(t, err, "Failed to execute query with aggregations")
 
 	referencePrice := result.Hits[0]["price"].(float64)
@@ -523,7 +565,6 @@ func TestElasticsearchSort(t *testing.T) {
 		assert.LessOrEqual(t, currentPrice, referencePrice, "Expected items to be sorted by price in descending order")
 		referencePrice = currentPrice
 	}
-
 }
 
 // TestElasticsearchSort demonstrates sorting functionality
@@ -557,12 +598,18 @@ func TestElasticsearchSortAsc(t *testing.T) {
 	// Create a query builder with aggregations
 	builder := NewQueryBuilder(request, indexName)
 
-	builder.WithMatchQuery("category", "electronics")
+	builder.With(types.Query{
+		Match: map[string]types.MatchQuery{
+			"category": {
+				Query: "electronics",
+			},
+		},
+	})
 	builder.Sort("price", sortorder.Asc)
 	builder.SetSize(50)
 
 	// Execute the query
-	result, err := builder.Execute(ctx, backend)
+	result, err := backend.Execute(ctx, builder)
 	require.NoError(t, err, "Failed to execute query with aggregations")
 
 	referencePrice := result.Hits[0]["price"].(float64)
@@ -571,5 +618,4 @@ func TestElasticsearchSortAsc(t *testing.T) {
 		assert.GreaterOrEqual(t, currentPrice, referencePrice, "Expected items to be sorted by price in descending order")
 		referencePrice = currentPrice
 	}
-
 }
