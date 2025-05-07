@@ -23,6 +23,8 @@ func Test_That_With_Adds_Query_To_Source(t *testing.T) {
 	// For comparison, convert to map
 	qMap := termQueryToMap("property", "value", true)
 	expected := map[string]any{
+		"from": float64(0),
+		"size": float64(24),
 		"query": map[string]any{
 			"bool": map[string]any{
 				"must": []any{qMap},
@@ -49,6 +51,8 @@ func Test_That_Without_Adds_Query_To_Source(t *testing.T) {
 	// For comparison, convert to map
 	qMap := termQueryToMap("property", "value", true)
 	expected := map[string]any{
+		"from": float64(0),
+		"size": float64(24),
 		"query": map[string]any{
 			"bool": map[string]any{
 				"must_not": []any{qMap},
@@ -75,6 +79,8 @@ func Test_That_Boost_Adds_Query_To_Source(t *testing.T) {
 	// For comparison, convert to map
 	qMap := termQueryToMap("property", "value", true)
 	expected := map[string]any{
+		"from": float64(0),
+		"size": float64(24),
 		"query": map[string]any{
 			"bool": map[string]any{
 				"should": []any{qMap},

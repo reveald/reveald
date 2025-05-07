@@ -273,7 +273,7 @@ func (qb *QueryBuilder) PostFilterBoost(query types.Query) {
 //	)
 func (qb *QueryBuilder) Selection() *DocumentSelector {
 	if qb.selection == nil {
-		qb.selection = &DocumentSelector{}
+		qb.selection = NewDocumentSelector()
 	}
 	return qb.selection
 }
