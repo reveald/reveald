@@ -3,6 +3,8 @@ package reveald
 import (
 	"testing"
 
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types/enums/sortorder"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -33,7 +35,7 @@ func Test_NewDocumentSelector(t *testing.T) {
 	})
 
 	t.Run("set sort", func(t *testing.T) {
-		ds := NewDocumentSelector(WithSort("test", "asc"))
+		ds := NewDocumentSelector(WithSort("test", sortorder.Asc))
 		assert.NotNil(t, ds.sort)
 	})
 }
@@ -51,20 +53,16 @@ func Test_Update(t *testing.T) {
 		{"from default offset", NewDocumentSelector(), []Selector{WithOffset(10)}, func(ds *DocumentSelector) bool {
 			return ds.offset == 10
 		}},
-		{"from default sort", NewDocumentSelector(), []Selector{WithSort("test", "asc")}, func(ds *DocumentSelector) bool {
+		{"from default sort", NewDocumentSelector(), []Selector{WithSort("test", sortorder.Asc)}, func(ds *DocumentSelector) bool {
 			if ds.sort == nil {
 				return false
 			}
-			field, fieldExists := ds.sort["test"]
-			if !fieldExists {
-				return false
-			}
-			options, optionsOk := field.(map[string]any)
+			field := ds.sort[0].(types.SortOptions)
+			options, optionsOk := field.SortOptions["test"]
 			if !optionsOk {
 				return false
 			}
-			order, orderOk := options["order"].(string)
-			return orderOk && order == "asc"
+			return options.Order.Name == "asc"
 		}},
 		{"from set page size", NewDocumentSelector(WithPageSize(20)), []Selector{WithPageSize(10)}, func(ds *DocumentSelector) bool {
 			return ds.pageSize == 10
@@ -72,20 +70,12 @@ func Test_Update(t *testing.T) {
 		{"from set offset", NewDocumentSelector(WithOffset(20)), []Selector{WithOffset(10)}, func(ds *DocumentSelector) bool {
 			return ds.offset == 10
 		}},
-		{"from set sort", NewDocumentSelector(WithSort("test2", "asc")), []Selector{WithSort("test", "asc")}, func(ds *DocumentSelector) bool {
+		{"from set sort", NewDocumentSelector(WithSort("test2", sortorder.Asc)), []Selector{WithSort("test", sortorder.Asc)}, func(ds *DocumentSelector) bool {
 			if ds.sort == nil {
 				return false
 			}
-			field, fieldExists := ds.sort["test"]
-			if !fieldExists {
-				return false
-			}
-			options, optionsOk := field.(map[string]any)
-			if !optionsOk {
-				return false
-			}
-			order, orderOk := options["order"].(string)
-			return orderOk && order == "asc"
+			field := ds.sort[0].(types.SortOptions)
+			return field.SortOptions["test2"].Order.Name == "asc"
 		}},
 	}
 

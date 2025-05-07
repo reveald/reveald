@@ -6,7 +6,6 @@ import (
 
 	"github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
-	"github.com/elastic/go-elasticsearch/v8/typedapi/types/enums/sortorder"
 )
 
 /*
@@ -25,11 +24,7 @@ type QueryBuilder struct {
 	indices        []string
 	boolQuery      *types.BoolQuery
 	aggregations   map[string]types.Aggregations
-	sorts          []types.SortOptions
-	size           *int
-	from           *int
-	sourceIncludes []string
-	sourceExcludes []string
+	selection      *DocumentSelector
 	scriptFields   map[string]types.ScriptField
 	runtimeFields  map[string]types.RuntimeField
 	docValueFields []types.FieldAndFormat
@@ -56,9 +51,6 @@ func NewQueryBuilder(r *Request, indices ...string) *QueryBuilder {
 		indices:        indices,
 		boolQuery:      &types.BoolQuery{},
 		aggregations:   make(map[string]types.Aggregations),
-		sorts:          []types.SortOptions{},
-		sourceIncludes: []string{},
-		sourceExcludes: []string{},
 		scriptFields:   make(map[string]types.ScriptField),
 		runtimeFields:  make(map[string]types.RuntimeField),
 		docValueFields: []types.FieldAndFormat{},
@@ -280,35 +272,10 @@ func (qb *QueryBuilder) PostFilterBoost(query types.Query) {
 //	    reveald.WithProperties("id", "name", "price", "category"),
 //	)
 func (qb *QueryBuilder) Selection() *DocumentSelector {
-	// Create a DocumentSelector if none exists yet
-	// This allows the user to retrieve current selection settings
-	// and also to chain methods on the DocumentSelector
-	if qb.size == nil {
-		defaultSize := 24
-		qb.size = &defaultSize
+	if qb.selection == nil {
+		qb.selection = &DocumentSelector{}
 	}
-	if qb.from == nil {
-		defaultFrom := 0
-		qb.from = &defaultFrom
-	}
-
-	// Create a selector from existing values
-	selector := &DocumentSelector{
-		inclusions: qb.sourceIncludes,
-		exclusions: qb.sourceExcludes,
-		offset:     *qb.from,
-		pageSize:   *qb.size,
-	}
-
-	// Set current sort if available
-	if len(qb.sorts) > 0 {
-		// Convert the sort options to the format expected by DocumentSelector
-		// This is a simplification - we only handle the first sort option
-		sortData, _ := json.Marshal(qb.sorts[0])
-		_ = json.Unmarshal(sortData, &selector.sort)
-	}
-
-	return selector
+	return qb.selection
 }
 
 // Aggregation adds an aggregation to the query.
@@ -410,79 +377,80 @@ func (qb *QueryBuilder) DocvalueFields(docvalueFields ...string) {
 	}
 }
 
-// Sort adds a sort option to the query.
-//
-// Documents will be sorted according to the specified field and order.
-//
-// Example:
-//
-//	// Sort by price in descending order
-//	builder.Sort("price", sortorder.Desc)
-//
-//	// Sort by name in ascending order
-//	builder.Sort("name.keyword", sortorder.Asc)
-//
-//	// Sort by multiple fields
-//	builder.Sort("price", sortorder.Desc)
-//	builder.Sort("rating", sortorder.Desc)
-func (qb *QueryBuilder) Sort(field string, order sortorder.SortOrder) {
-	orderCopy := order // Create a copy to get address of
+// // Sort adds a sort option to the query.
+// //
+// // Documents will be sorted according to the specified field and order.
+// //
+// // Example:
+// //
+// //	// Sort by price in descending order
+// //	builder.Sort("price", sortorder.Desc)
+// //
+// //	// Sort by name in ascending order
+// //	builder.Sort("name.keyword", sortorder.Asc)
+// //
+// //	// Sort by multiple fields
+// //	builder.Sort("price", sortorder.Desc)
+// //	builder.Sort("rating", sortorder.Desc)
+// func (qb *QueryBuilder) Sort(field string, order sortorder.SortOrder) {
+// 	orderCopy := order // Create a copy to get address of
 
-	sort := types.SortOptions{
-		SortOptions: map[string]types.FieldSort{
-			field: {Order: &orderCopy},
-		},
-	}
-	qb.sorts = append(qb.sorts, sort)
-}
+// 	sort := types.SortOptions{
+// 		SortOptions: map[string]types.FieldSort{
+// 			field: {Order: &orderCopy},
+// 		},
+// 	}
 
-// SetSize sets the maximum number of documents to return.
-//
-// This is equivalent to the "size" parameter in Elasticsearch.
-//
-// Example:
-//
-//	// Return at most 10 documents
-//	builder.SetSize(10)
-func (qb *QueryBuilder) SetSize(size int) {
-	qb.size = &size
-}
+// 	qb.sorts = append(qb.sorts, sort)
+// }
 
-// SetFrom sets the number of documents to skip.
-//
-// This is equivalent to the "from" parameter in Elasticsearch and is used for pagination.
-//
-// Example:
-//
-//	// Skip the first 20 documents (for page 3 with page size 10)
-//	builder.SetFrom(20)
-func (qb *QueryBuilder) SetFrom(from int) {
-	qb.from = &from
-}
+// // SetSize sets the maximum number of documents to return.
+// //
+// // This is equivalent to the "size" parameter in Elasticsearch.
+// //
+// // Example:
+// //
+// //	// Return at most 10 documents
+// //	builder.SetSize(10)
+// func (qb *QueryBuilder) SetSize(size int) {
+// 	qb.size = &size
+// }
 
-// IncludeFields specifies which fields to include in the response.
-//
-// This is equivalent to the "_source.includes" parameter in Elasticsearch.
-//
-// Example:
-//
-//	// Only include id, name, and price fields
-//	builder.IncludeFields("id", "name", "price")
-func (qb *QueryBuilder) IncludeFields(fields ...string) {
-	qb.sourceIncludes = append(qb.sourceIncludes, fields...)
-}
+// // SetFrom sets the number of documents to skip.
+// //
+// // This is equivalent to the "from" parameter in Elasticsearch and is used for pagination.
+// //
+// // Example:
+// //
+// //	// Skip the first 20 documents (for page 3 with page size 10)
+// //	builder.SetFrom(20)
+// func (qb *QueryBuilder) SetFrom(from int) {
+// 	qb.from = &from
+// }
 
-// ExcludeFields specifies which fields to exclude from the response.
-//
-// This is equivalent to the "_source.excludes" parameter in Elasticsearch.
-//
-// Example:
-//
-//	// Exclude description and metadata fields
-//	builder.ExcludeFields("description", "metadata")
-func (qb *QueryBuilder) ExcludeFields(fields ...string) {
-	qb.sourceExcludes = append(qb.sourceExcludes, fields...)
-}
+// // IncludeFields specifies which fields to include in the response.
+// //
+// // This is equivalent to the "_source.includes" parameter in Elasticsearch.
+// //
+// // Example:
+// //
+// //	// Only include id, name, and price fields
+// //	builder.IncludeFields("id", "name", "price")
+// func (qb *QueryBuilder) IncludeFields(fields ...string) {
+// 	qb.sourceIncludes = append(qb.sourceIncludes, fields...)
+// }
+
+// // ExcludeFields specifies which fields to exclude from the response.
+// //
+// // This is equivalent to the "_source.excludes" parameter in Elasticsearch.
+// //
+// // Example:
+// //
+// //	// Exclude description and metadata fields
+// //	builder.ExcludeFields("description", "metadata")
+// func (qb *QueryBuilder) ExcludeFields(fields ...string) {
+// 	qb.sourceExcludes = append(qb.sourceExcludes, fields...)
+// }
 
 // Build constructs the Elasticsearch query as a map.
 //
@@ -538,25 +506,26 @@ func (qb *QueryBuilder) BuildRequest() *search.Request {
 		request.Aggregations = qb.aggregations
 	}
 
-	// Add sort if we have any
-	for _, sort := range qb.sorts {
-		request.Sort = append(request.Sort, sort)
-	}
+	selection := qb.Selection()
 
-	// Add size and from if set
-	if qb.size != nil {
-		request.Size = qb.size
-	}
+	request.Size = &selection.pageSize
+	request.From = &selection.offset
 
-	if qb.from != nil {
-		request.From = qb.from
+	if selection.sort != nil {
+		request.Sort = selection.sort
 	}
 
 	// Add source filtering if we have includes or excludes
-	if len(qb.sourceIncludes) > 0 || len(qb.sourceExcludes) > 0 {
+	if len(selection.inclusions) > 0 {
 		request.Source_ = types.SourceFilter{
-			Excludes: qb.sourceExcludes,
-			Includes: qb.sourceIncludes,
+			Includes: selection.inclusions,
+		}
+	}
+
+	if len(selection.inclusions) > 0 || len(selection.exclusions) > 0 {
+		request.Source_ = types.SourceFilter{
+			Excludes: selection.exclusions,
+			Includes: selection.inclusions,
 		}
 	}
 

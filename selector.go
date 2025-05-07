@@ -1,5 +1,10 @@
 package reveald
 
+import (
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types/enums/sortorder"
+)
+
 // DocumentSelector is a container for Elasticsearch data, which is not part of a document search.
 //
 // It includes information about page sizes, sorting, and field inclusion/exclusion.
@@ -10,7 +15,7 @@ type DocumentSelector struct {
 	exclusions []string
 	offset     int
 	pageSize   int
-	sort       map[string]any
+	sort       []types.SortCombinations
 }
 
 const (
@@ -102,13 +107,15 @@ func WithOffset(offset int) Selector {
 //	selector := reveald.NewDocumentSelector(
 //	    reveald.WithSort("name", "asc"),
 //	)
-func WithSort(field string, order string) Selector {
+func WithSort(field string, order sortorder.SortOrder) Selector {
 	return func(s *DocumentSelector) {
-		s.sort = map[string]any{
-			field: map[string]any{
-				"order": order,
+		s.sort = append(s.sort, types.SortOptions{
+			SortOptions: map[string]types.FieldSort{
+				field: {
+					Order: &order,
+				},
 			},
-		}
+		})
 	}
 }
 
@@ -162,17 +169,4 @@ func (ds *DocumentSelector) Update(selectors ...Selector) {
 	for _, selector := range selectors {
 		selector(ds)
 	}
-}
-
-// Sort returns the current sort for a search request.
-//
-// Example:
-//
-//	// Get the current sort settings
-//	sort := selector.Sort()
-//	if sort != nil {
-//	    fmt.Printf("Sorting by: %v\n", sort)
-//	}
-func (ds *DocumentSelector) Sort() map[string]any {
-	return ds.sort
 }

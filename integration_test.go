@@ -287,7 +287,7 @@ func TestElasticBackendWithTestcontainers(t *testing.T) {
 		})
 
 		// Add sort by price descending
-		builder.Sort("price", sortorder.Desc)
+		builder.Selection().Update(WithSort("price", sortorder.Desc))
 
 		// Execute the query
 		result, err := backend.Execute(ctx, builder)

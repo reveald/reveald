@@ -147,7 +147,7 @@ func (sf *SortingFeature) build(builder *reveald.QueryBuilder) {
 	if !option.ascending {
 		sortOrder = sortorder.Desc
 	}
-	builder.Sort(option.property, sortOrder)
+	builder.Selection().Update(reveald.WithSort(option.property, sortOrder))
 }
 
 // handle adds sorting information to the result.

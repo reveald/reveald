@@ -12,6 +12,7 @@ import (
 	"github.com/elastic/go-elasticsearch/v8/esapi"
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types/enums/sortorder"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -498,9 +499,9 @@ func TestElasticsearchPagination(t *testing.T) {
 			},
 		},
 	})
-	builder.Sort("price", sortorder.Asc)
-	builder.SetSize(10) // Page 2, 10 items per page
-	builder.SetFrom(20)
+	builder.Selection().Update(WithSort("price", sortorder.Asc))
+	builder.Selection().Update(WithPageSize(10))
+	builder.Selection().Update(WithOffset(20))
 
 	// Execute the query
 	result, err := backend.Execute(ctx, builder)
@@ -552,8 +553,8 @@ func TestElasticsearchSort(t *testing.T) {
 			},
 		},
 	})
-	builder.Sort("price", sortorder.Desc)
-	builder.SetSize(50)
+	builder.Selection().Update(WithSort("price", sortorder.Desc))
+	builder.Selection().Update(WithPageSize(50))
 
 	// Execute the query
 	result, err := backend.Execute(ctx, builder)
@@ -605,8 +606,8 @@ func TestElasticsearchSortAsc(t *testing.T) {
 			},
 		},
 	})
-	builder.Sort("price", sortorder.Asc)
-	builder.SetSize(50)
+	builder.Selection().Update(WithSort("price", sortorder.Asc))
+	builder.Selection().Update(WithPageSize(50))
 
 	// Execute the query
 	result, err := backend.Execute(ctx, builder)

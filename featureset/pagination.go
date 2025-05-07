@@ -134,8 +134,7 @@ func (pf *PaginationFeature) build(builder *reveald.QueryBuilder) {
 		pageSize = pf.pageSize
 	}
 
-	builder.SetSize(pageSize)
-	builder.SetFrom(offset)
+	builder.Selection().Update(reveald.WithPageSize(pageSize), reveald.WithOffset(offset))
 }
 
 // handle adds pagination information to the result.

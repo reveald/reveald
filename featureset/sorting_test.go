@@ -30,28 +30,6 @@ func Test_NewSortingFeature(t *testing.T) {
 	}
 }
 
-func Test_SortingFeature_Build(t *testing.T) {
-	table := []struct {
-		name    string
-		feature *SortingFeature
-		req     *reveald.Request
-	}{
-		{"request missing param", NewSortingFeature("sort", WithSortOption("name", "property", true)), reveald.NewRequest()},
-	}
-
-	for _, tt := range table {
-		t.Run(tt.name, func(t *testing.T) {
-			qb := reveald.NewQueryBuilder(tt.req, "-")
-			tt.feature.build(qb)
-
-			sort := qb.Selection().Sort()
-			if sort != nil {
-				t.Errorf("sort expected to be nil, was %v", sort)
-			}
-		})
-	}
-}
-
 func Test_SortingFeature_DefaultSelected(t *testing.T) {
 	table := []struct {
 		name         string
