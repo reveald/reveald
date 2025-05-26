@@ -757,6 +757,9 @@ func Test_ScriptedFieldsWithAggregations_Integration(t *testing.T) {
 			},
 		})
 
+		// Note: With the updated implementation, source fields are automatically included
+		// alongside scripted fields, so no explicit field selection is needed
+
 		// Add a scripted field that categorizes products by price range
 		priceRangeScript := `
 			if (doc['price'].value < 100) {
@@ -849,5 +852,175 @@ func Test_ScriptedFieldsWithAggregations_Integration(t *testing.T) {
 		assert.Equal(t, int64(2), aggCategoryCount["premium"], "Should have 2 premium products")
 
 		t.Logf("Successfully demonstrated aggregations on scripted field values")
+	})
+
+	// Test: Verify that both scripted fields and ordinary source fields are returned together
+	t.Run("ScriptedFieldsWithOrdinaryFields", func(t *testing.T) {
+		// Create a query builder for all products
+		qb := reveald.NewQueryBuilder(nil, testIndex)
+
+		// Note: With the updated implementation, source fields are automatically included
+		// alongside scripted fields, so no explicit field selection is needed
+
+		// Add multiple scripted fields for comprehensive testing
+		discountScript := "doc['price'].value * 0.85"                               // 15% discount
+		valueRatioScript := "doc['price'].value / Math.max(doc['rating'].value, 1)" // price per rating point
+		categoryUpperScript := "doc['category'].value.toUpperCase()"                // uppercase category
+
+		// Create and process multiple scripted field features
+		discountFeature := NewScriptedFieldFeature("discount_price", discountScript)
+		valueRatioFeature := NewScriptedFieldFeature("value_ratio", valueRatioScript)
+		categoryUpperFeature := NewScriptedFieldFeature("category_upper", categoryUpperScript)
+
+		// Process all scripted fields
+		_, err := discountFeature.Process(qb, func(builder *reveald.QueryBuilder) (*reveald.Result, error) {
+			return &reveald.Result{}, nil // Just add the scripted field, don't execute yet
+		})
+		require.NoError(t, err, "Failed to process discount scripted field")
+
+		_, err = valueRatioFeature.Process(qb, func(builder *reveald.QueryBuilder) (*reveald.Result, error) {
+			return &reveald.Result{}, nil // Just add the scripted field, don't execute yet
+		})
+		require.NoError(t, err, "Failed to process value ratio scripted field")
+
+		_, err = categoryUpperFeature.Process(qb, func(builder *reveald.QueryBuilder) (*reveald.Result, error) {
+			return &reveald.Result{}, nil // Just add the scripted field, don't execute yet
+		})
+		require.NoError(t, err, "Failed to process category upper scripted field")
+
+		// Execute the query
+		result, err := backend.Execute(ctx, qb)
+		require.NoError(t, err, "Failed to execute query with mixed scripted and source fields")
+
+		// Verify we got all documents
+		assert.Equal(t, int64(5), result.TotalHitCount, "Expected all 5 products")
+		assert.Len(t, result.Hits, 5, "Expected 5 hits")
+
+		// Verify that each hit contains both source fields and scripted fields
+		expectedSourceFields := []string{"title", "category", "price", "rating", "active"}
+		expectedScriptedFields := []string{"discount_price", "value_ratio", "category_upper"}
+
+		for i, hit := range result.Hits {
+			t.Logf("Hit %d: %+v", i, hit)
+
+			// Verify all expected source fields are present
+			for _, field := range expectedSourceFields {
+				value, hasField := hit[field]
+				assert.True(t, hasField, "Hit %d should have source field '%s'", i, field)
+				assert.NotNil(t, value, "Hit %d source field '%s' should not be nil", i, field)
+			}
+
+			// Verify all expected scripted fields are present
+			for _, field := range expectedScriptedFields {
+				value, hasField := hit[field]
+				assert.True(t, hasField, "Hit %d should have scripted field '%s'", i, field)
+				assert.NotNil(t, value, "Hit %d scripted field '%s' should not be nil", i, field)
+			}
+
+			// Verify specific field types and relationships
+			title, hasTitle := hit["title"]
+			category, hasCategory := hit["category"]
+			price, hasPrice := hit["price"]
+			rating, hasRating := hit["rating"]
+			active, hasActive := hit["active"]
+
+			discountPrice, hasDiscountPrice := hit["discount_price"]
+			valueRatio, hasValueRatio := hit["value_ratio"]
+			categoryUpper, hasCategoryUpper := hit["category_upper"]
+
+			// All fields should be present
+			assert.True(t, hasTitle && hasCategory && hasPrice && hasRating && hasActive,
+				"Hit %d should have all source fields", i)
+			assert.True(t, hasDiscountPrice && hasValueRatio && hasCategoryUpper,
+				"Hit %d should have all scripted fields", i)
+
+			// Verify field types
+			if hasTitle {
+				assert.IsType(t, "", title, "Title should be a string")
+			}
+			if hasCategory {
+				assert.IsType(t, "", category, "Category should be a string")
+			}
+			if hasPrice {
+				assert.IsType(t, float64(0), price, "Price should be a float64")
+			}
+			if hasRating {
+				// Rating could be int or float64 depending on how Elasticsearch returns it
+				assert.True(t,
+					fmt.Sprintf("%T", rating) == "float64" || fmt.Sprintf("%T", rating) == "int",
+					"Rating should be numeric, got %T", rating)
+			}
+			if hasActive {
+				assert.IsType(t, true, active, "Active should be a boolean")
+			}
+
+			// Verify scripted field types and reasonable values
+			if hasDiscountPrice {
+				if discountVal, ok := discountPrice.(float64); ok {
+					assert.Greater(t, discountVal, 0.0, "Discount price should be positive")
+					assert.Less(t, discountVal, 2000.0, "Discount price should be reasonable")
+
+					// Verify discount calculation (should be 85% of original price)
+					if priceVal, ok := price.(float64); ok {
+						expectedDiscount := priceVal * 0.85
+						assert.InDelta(t, expectedDiscount, discountVal, 0.01,
+							"Discount price should be 85%% of original price")
+					}
+				} else {
+					t.Errorf("discount_price should be float64, got %T", discountPrice)
+				}
+			}
+
+			if hasValueRatio {
+				if ratioVal, ok := valueRatio.(float64); ok {
+					assert.Greater(t, ratioVal, 0.0, "Value ratio should be positive")
+					assert.Less(t, ratioVal, 1000.0, "Value ratio should be reasonable")
+				} else {
+					t.Errorf("value_ratio should be float64, got %T", valueRatio)
+				}
+			}
+
+			if hasCategoryUpper {
+				if upperVal, ok := categoryUpper.(string); ok {
+					assert.NotEmpty(t, upperVal, "Category upper should not be empty")
+
+					// Verify it's actually uppercase
+					if categoryVal, ok := category.(string); ok {
+						expectedUpper := strings.ToUpper(categoryVal)
+						assert.Equal(t, expectedUpper, upperVal,
+							"Category upper should be uppercase version of category")
+					}
+				} else {
+					t.Errorf("category_upper should be string, got %T", categoryUpper)
+				}
+			}
+
+			// Log the complete hit for debugging
+			t.Logf("Hit %d complete data:", i)
+			t.Logf("  Source fields: title=%v, category=%v, price=%v, rating=%v, active=%v",
+				title, category, price, rating, active)
+			t.Logf("  Scripted fields: discount_price=%v, value_ratio=%v, category_upper=%v",
+				discountPrice, valueRatio, categoryUpper)
+		}
+
+		// Verify that we have a good mix of data
+		categories := make(map[string]int)
+		activeCount := 0
+		for _, hit := range result.Hits {
+			if category, ok := hit["category"].(string); ok {
+				categories[category]++
+			}
+			if active, ok := hit["active"].(bool); ok && active {
+				activeCount++
+			}
+		}
+
+		// Should have multiple categories
+		assert.GreaterOrEqual(t, len(categories), 2, "Should have at least 2 different categories")
+		assert.Equal(t, 4, activeCount, "Should have 4 active products")
+
+		t.Logf("Successfully demonstrated mixed scripted and source fields in hits")
+		t.Logf("Categories found: %+v", categories)
+		t.Logf("Active products: %d", activeCount)
 	})
 }

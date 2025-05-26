@@ -516,16 +516,22 @@ func (qb *QueryBuilder) BuildRequest() *search.Request {
 	}
 
 	// Add source filtering if we have includes or excludes
-	if len(selection.inclusions) > 0 {
-		request.Source_ = types.SourceFilter{
-			Includes: selection.inclusions,
-		}
-	}
-
-	if len(selection.inclusions) > 0 || len(selection.exclusions) > 0 {
-		request.Source_ = types.SourceFilter{
+	// When script fields are present, we need to ensure _source is included
+	// unless explicitly excluded, otherwise only script fields will be returned
+	if len(selection.inclusions) > 0 || len(selection.exclusions) > 0 || len(qb.scriptFields) > 0 {
+		sourceFilter := types.SourceFilter{
 			Excludes: selection.exclusions,
 			Includes: selection.inclusions,
+		}
+
+		// If we have script fields but no explicit source configuration,
+		// ensure source is included by default (set to true)
+		if len(qb.scriptFields) > 0 && len(selection.inclusions) == 0 && len(selection.exclusions) == 0 {
+			// When only script fields are present, we want both source and script fields
+			// Setting Source_ to true ensures _source is included alongside script fields
+			request.Source_ = true
+		} else {
+			request.Source_ = sourceFilter
 		}
 	}
 
