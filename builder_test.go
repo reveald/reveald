@@ -103,8 +103,22 @@ func Test_That_Aggregation_Adds_Aggregation_To_Source(t *testing.T) {
 	}
 	builder.Aggregation("property", agg)
 
-	// Skip this test as the format of aggregations may have changed
-	t.Skip("Skipping aggregation test due to format changes in the typed API")
+	actual := builder.Build()
+
+	// For comparison, convert to map
+	aggMap := termsAggregationToMap("property")
+	expected := map[string]any{
+		"from": float64(0),
+		"size": float64(24),
+		"query": map[string]any{
+			"bool": map[string]any{},
+		},
+		"aggregations": map[string]any{
+			"property": aggMap,
+		},
+	}
+
+	assert.Equal(t, expected, actual)
 }
 
 func Test_That_PostFilter_Adds_To_Source(t *testing.T) {
@@ -121,8 +135,26 @@ func Test_That_PostFilter_Adds_To_Source(t *testing.T) {
 	builder.PostFilterWithout(q)
 	builder.PostFilterBoost(q)
 
-	// Skip this test as the format of post filters may have changed
-	t.Skip("Skipping post filter test due to format changes in the typed API")
+	actual := builder.Build()
+
+	// For comparison, convert to map
+	qMap := termQueryToMap("property", "value", true)
+	expected := map[string]any{
+		"from": float64(0),
+		"size": float64(24),
+		"query": map[string]any{
+			"bool": map[string]any{},
+		},
+		"post_filter": map[string]any{
+			"bool": map[string]any{
+				"must":     []any{qMap},
+				"must_not": []any{qMap},
+				"should":   []any{qMap},
+			},
+		},
+	}
+
+	assert.Equal(t, expected, actual)
 }
 
 // Helper functions to create map representations of queries and aggregations for testing

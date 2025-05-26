@@ -198,44 +198,61 @@ func WithRetrier(retrier any) ElasticBackendOption {
 //
 //	// Create a basic Elasticsearch backend
 //	backend, err := reveald.NewElasticBackend(
-//	    []string{"http://localhost:9200"},
+//	    []string{"localhost:9200"},
 //	)
 //	if err != nil {
-//	    // Handle error
+//	    log.Fatal(err)
 //	}
 //
-//	// Create a backend with multiple options
+//	// Create a backend with custom options
 //	backend, err := reveald.NewElasticBackend(
 //	    []string{"localhost:9200"},
 //	    reveald.WithScheme("https"),
-//	    reveald.WithCredentials("username", "password"),
-//	    reveald.WithSniff(true),
+//	    reveald.WithCredentials("user", "pass"),
 //	)
 func NewElasticBackend(nodes []string, opts ...ElasticBackendOption) (*ElasticBackend, error) {
-	// Ensure all nodes have the protocol prefix
+	// Convert nodes to full URLs if they don't have a scheme
+	addresses := make([]string, len(nodes))
 	for i, node := range nodes {
 		if !strings.HasPrefix(node, "http://") && !strings.HasPrefix(node, "https://") {
-			nodes[i] = "http://" + node
+			addresses[i] = "http://" + node
+		} else {
+			addresses[i] = node
 		}
 	}
 
-	b := &ElasticBackend{
+	backend := &ElasticBackend{
 		config: elasticsearch.Config{
-			Addresses: nodes,
+			Addresses: addresses,
 		},
 	}
 
+	// Apply options
 	for _, opt := range opts {
-		opt(b)
+		opt(backend)
 	}
 
-	client, err := elasticsearch.NewClient(b.config)
+	// Create the client
+	client, err := elasticsearch.NewClient(backend.config)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create Elasticsearch client: %w", err)
 	}
 
-	b.client = client
-	return b, nil
+	backend.client = client
+	return backend, nil
+}
+
+// GetClient returns the underlying Elasticsearch client.
+//
+// This method is primarily intended for testing and advanced use cases
+// where direct access to the Elasticsearch client is needed.
+//
+// Example:
+//
+//	client := backend.GetClient()
+//	res, err := client.Info()
+func (b *ElasticBackend) GetClient() *elasticsearch.Client {
+	return b.client
 }
 
 func mapSearchResult(res *esapi.Response, req *QueryBuilder) (*Result, error) {
@@ -269,12 +286,13 @@ func mapSearchResult(res *esapi.Response, req *QueryBuilder) (*Result, error) {
 				continue
 			}
 
+			// Start with _source if available, otherwise create empty map
 			source, foundSource := hitObj["_source"].(map[string]any)
 			if !foundSource {
-				continue
+				source = make(map[string]any)
 			}
 
-			// Add fields if present
+			// Add fields if present (this includes script fields)
 			if fields, foundFields := hitObj["fields"].(map[string]any); foundFields {
 				for field, value := range fields {
 					list, ok := value.([]any)
@@ -286,7 +304,10 @@ func mapSearchResult(res *esapi.Response, req *QueryBuilder) (*Result, error) {
 				}
 			}
 
-			hits = append(hits, source)
+			// Only add the hit if we have either _source or fields
+			if foundSource || len(source) > 0 {
+				hits = append(hits, source)
+			}
 		}
 	}
 

@@ -315,4 +315,182 @@ func TestElasticBackendWithTestcontainers(t *testing.T) {
 		// The first product should be Product 4 (price 199.99)
 		assert.Equal(t, "Product 4", result.Hits[0]["title"], "First product should be Product 4")
 	})
+
+	// Test scripted fields functionality
+	t.Run("TestScriptedFields", func(t *testing.T) {
+		ctx := context.Background()
+
+		// Create a query with scripted fields
+		builder := NewQueryBuilder(nil, testIndex)
+
+		// Add a scripted field that calculates a discount price (10% off)
+		discountScript := "doc['price'].value * 0.9"
+		builder.WithScriptedField("discount_price", &types.Script{
+			Source: &discountScript,
+		})
+
+		// Add another scripted field that calculates price per rating point
+		pricePerRatingScript := "doc['price'].value / Math.max(doc['rating'].value, 1)"
+		builder.WithScriptedField("price_per_rating", &types.Script{
+			Source: &pricePerRatingScript,
+		})
+
+		// Don't add any filters - get all documents
+		// This helps us debug if the issue is with the scripted fields or the filtering
+
+		// Execute the query
+		result, err := backend.Execute(ctx, builder)
+		require.NoError(t, err, "Failed to execute query with scripted fields")
+
+		// Verify we got results
+		assert.Greater(t, result.TotalHitCount, int64(0), "Expected at least one result")
+		assert.NotEmpty(t, result.Hits, "Expected hits in result")
+
+		// Check that scripted fields are present in the response
+		for i, hit := range result.Hits {
+
+			// Check if scripted fields are present
+			discountPrice, hasDiscount := hit["discount_price"]
+			pricePerRating, hasPricePerRating := hit["price_per_rating"]
+
+			assert.True(t, hasDiscount, "Expected discount_price scripted field in hit %d", i)
+			assert.True(t, hasPricePerRating, "Expected price_per_rating scripted field in hit %d", i)
+
+			// Verify the scripted field values are reasonable
+			if hasDiscount {
+				// discount_price should be a numeric value
+				if discountVal, ok := discountPrice.(float64); ok {
+					assert.Greater(t, discountVal, 0.0, "Discount price should be positive for hit %d", i)
+					// We can't verify the exact calculation without the original price,
+					// but we can verify it's a reasonable discount value
+					assert.Less(t, discountVal, 200.0, "Discount price should be reasonable for hit %d", i)
+				} else {
+					t.Errorf("discount_price should be a numeric value, got: %T %v", discountPrice, discountPrice)
+				}
+			}
+
+			if hasPricePerRating {
+				// price_per_rating should be a numeric value
+				if pricePerRatingVal, ok := pricePerRating.(float64); ok {
+					assert.Greater(t, pricePerRatingVal, 0.0, "Price per rating should be positive for hit %d", i)
+					assert.Less(t, pricePerRatingVal, 100.0, "Price per rating should be reasonable for hit %d", i)
+				} else {
+					t.Errorf("price_per_rating should be a numeric value, got: %T %v", pricePerRating, pricePerRating)
+				}
+			}
+		}
+
+		// Verify that we have the expected number of hits with script fields
+		assert.Len(t, result.Hits, 5, "Expected 5 hits with script fields")
+
+		// Verify that all hits have both script fields
+		for i, hit := range result.Hits {
+			_, hasDiscount := hit["discount_price"]
+			_, hasPricePerRating := hit["price_per_rating"]
+			assert.True(t, hasDiscount, "Hit %d should have discount_price", i)
+			assert.True(t, hasPricePerRating, "Hit %d should have price_per_rating", i)
+		}
+	})
+
+	// Test scripted fields with aggregations
+	t.Run("TestScriptedFieldsWithAggregations", func(t *testing.T) {
+		ctx := context.Background()
+
+		// Create a query builder
+		builder := NewQueryBuilder(nil, testIndex)
+
+		// Add a scripted field that categorizes products by price range
+		// This will create categories: "low" (< 50), "medium" (50-150), "high" (> 150)
+		priceRangeScript := `
+			if (doc['price'].value < 50) {
+				return 'low';
+			} else if (doc['price'].value <= 150) {
+				return 'medium';
+			} else {
+				return 'high';
+			}
+		`
+		builder.WithScriptedField("price_range", &types.Script{
+			Source: &priceRangeScript,
+		})
+
+		// Add an aggregation on the scripted field using a script-based terms aggregation
+		// Since scripted fields don't have .keyword mappings, we need to use a script for aggregation
+		aggregationScript := priceRangeScript // Same script as the scripted field
+
+		termsAgg := types.Aggregations{
+			Terms: &types.TermsAggregation{
+				Script: &types.Script{
+					Source: &aggregationScript,
+				},
+				Size: func() *int { size := 10; return &size }(),
+			},
+		}
+
+		builder.Aggregation("price_range_agg", termsAgg)
+
+		// Execute the query
+		result, err := backend.Execute(ctx, builder)
+		require.NoError(t, err, "Failed to execute query with scripted field and aggregation")
+
+		// Verify we got results with the scripted field
+		assert.Greater(t, result.TotalHitCount, int64(0), "Expected at least one result")
+		assert.NotEmpty(t, result.Hits, "Expected hits in result")
+
+		// Verify that all hits have the price_range scripted field
+		priceRanges := make(map[string]int)
+		for i, hit := range result.Hits {
+			priceRange, hasPriceRange := hit["price_range"]
+			assert.True(t, hasPriceRange, "Hit %d should have price_range", i)
+
+			if hasPriceRange {
+				if rangeVal, ok := priceRange.(string); ok {
+					priceRanges[rangeVal]++
+					assert.Contains(t, []string{"low", "medium", "high"}, rangeVal,
+						"Price range should be low, medium, or high for hit %d", i)
+				} else {
+					t.Errorf("price_range should be a string value, got: %T %v", priceRange, priceRange)
+				}
+			}
+		}
+
+		// Verify we have the expected distribution based on our test data:
+		// Product 3: 29.99 -> "low"
+		// Product 2: 49.99 -> "low"
+		// Product 1: 99.99 -> "medium"
+		// Product 5: 149.99 -> "medium"
+		// Product 4: 199.99 -> "high"
+		assert.Equal(t, 2, priceRanges["low"], "Expected 2 products in low price range")
+		assert.Equal(t, 2, priceRanges["medium"], "Expected 2 products in medium price range")
+		assert.Equal(t, 1, priceRanges["high"], "Expected 1 product in high price range")
+
+		t.Logf("Price range distribution from hits: %+v", priceRanges)
+
+		// Now verify the aggregation results match the scripted field results
+		assert.NotNil(t, result.Aggregations, "Expected aggregations in result")
+		aggBuckets, hasAgg := result.Aggregations["price_range_agg"]
+		assert.True(t, hasAgg, "Expected price_range_agg aggregation")
+		assert.NotEmpty(t, aggBuckets, "Expected aggregation buckets")
+
+		// Convert aggregation results to a map for comparison
+		aggRanges := make(map[string]int64)
+		for _, bucket := range aggBuckets {
+			if key, ok := bucket.Value.(string); ok {
+				aggRanges[key] = bucket.HitCount
+			}
+		}
+
+		t.Logf("Price range distribution from aggregation: %+v", aggRanges)
+
+		// Verify aggregation results match our expectations
+		assert.Equal(t, int64(2), aggRanges["low"], "Aggregation should show 2 products in low price range")
+		assert.Equal(t, int64(2), aggRanges["medium"], "Aggregation should show 2 products in medium price range")
+		assert.Equal(t, int64(1), aggRanges["high"], "Aggregation should show 1 product in high price range")
+
+		// Verify that the aggregation results match the scripted field results
+		for range_name, hitCount := range priceRanges {
+			assert.Equal(t, int64(hitCount), aggRanges[range_name],
+				"Aggregation count for %s should match scripted field count", range_name)
+		}
+	})
 }
