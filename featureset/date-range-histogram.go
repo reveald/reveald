@@ -169,6 +169,71 @@ func (drhf *DateRangeHistogramFeature) build(builder *reveald.QueryBuilder) {
 }
 
 func (drhf *DateRangeHistogramFeature) handle(result *reveald.Result) (*reveald.Result, error) {
-	// Buckets are already processed in the Result struct
+	agg, ok := result.RawAggregations()[drhf.property]
+	if !ok {
+		return result, nil
+	}
+
+	if drhf.nestedPath != "" {
+		// Handle nested aggregation
+		nested, ok := agg.(*types.NestedAggregate)
+		if !ok {
+			return result, nil
+		}
+
+		// Extract the inner date range aggregation from the nested aggregation
+		innerAgg, ok := nested.Aggregations[drhf.property]
+		if !ok {
+			return result, nil
+		}
+
+		dateRange, ok := innerAgg.(*types.DateRangeAggregate)
+		if !ok {
+			return result, nil
+		}
+
+		return drhf.processDateRangeBuckets(dateRange, result)
+	} else {
+		// Handle direct date range aggregation
+		dateRange, ok := agg.(*types.DateRangeAggregate)
+		if !ok {
+			return result, nil
+		}
+
+		return drhf.processDateRangeBuckets(dateRange, result)
+	}
+}
+
+func (drhf *DateRangeHistogramFeature) processDateRangeBuckets(dateRange *types.DateRangeAggregate, result *reveald.Result) (*reveald.Result, error) {
+	var resultBuckets []*reveald.ResultBucket
+
+	// Handle both map and slice bucket formats
+	if buckets, ok := dateRange.Buckets.(map[string]types.RangeBucket); ok {
+		// Map format (keyed buckets)
+		for key, bucket := range buckets {
+			resultBuckets = append(resultBuckets, &reveald.ResultBucket{
+				Value:    key,
+				HitCount: bucket.DocCount,
+			})
+		}
+	} else if buckets, ok := dateRange.Buckets.([]types.RangeBucket); ok {
+		// Array format (non-keyed buckets)
+		for _, bucket := range buckets {
+			// Use the key if available, otherwise use a default representation
+			var keyValue interface{}
+			if bucket.Key != nil {
+				keyValue = *bucket.Key
+			} else {
+				// Fallback to a string representation if key is not available
+				keyValue = "range"
+			}
+			resultBuckets = append(resultBuckets, &reveald.ResultBucket{
+				Value:    keyValue,
+				HitCount: bucket.DocCount,
+			})
+		}
+	}
+
+	result.Aggregations[drhf.property] = resultBuckets
 	return result, nil
 }

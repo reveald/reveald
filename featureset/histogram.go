@@ -192,9 +192,16 @@ func (hf *HistogramFeature) build(builder *reveald.QueryBuilder) {
 
 // handle processes the histogram aggregation results.
 func (hf *HistogramFeature) handle(result *reveald.Result) (*reveald.Result, error) {
-	// Extract histogram buckets from aggregations
-	buckets, ok := result.Aggregations[hf.property]
-	if !ok || len(buckets) == 0 {
+	// Extract histogram aggregate from aggregations
+	agg, ok := result.RawAggregations()[hf.property]
+	if !ok {
+		return result, nil
+	}
+
+	histogram, ok := agg.(types.HistogramAggregate)
+
+	buckets := histogram.Buckets.([]types.HistogramBucket)
+	if !ok {
 		return result, nil
 	}
 
@@ -202,30 +209,18 @@ func (hf *HistogramFeature) handle(result *reveald.Result) (*reveald.Result, err
 	zeroOut := len(buckets) > 0
 
 	for _, bucket := range buckets {
-		if bucket == nil {
-			continue
-		}
-
-		// Try to convert key to float64 for checks
-		keyValue, keyFloat := 0.0, false
-		switch v := bucket.Value.(type) {
-		case float64:
-			keyValue, keyFloat = v, true
-		case int:
-			keyValue, keyFloat = float64(v), true
-		case int64:
-			keyValue, keyFloat = float64(v), true
-		}
-
-		if keyFloat && keyValue <= 0 {
+		if bucket.Key <= 0 {
 			zeroOut = false
 		}
 
-		if keyFloat && keyValue == 0 && !hf.zeroBucket && bucket.HitCount == 0 {
+		if bucket.Key == 0 && !hf.zeroBucket && bucket.DocCount == 0 {
 			continue
 		}
 
-		resultBuckets = append(resultBuckets, bucket)
+		resultBuckets = append(resultBuckets, &reveald.ResultBucket{
+			Value:    bucket.Key,
+			HitCount: bucket.DocCount,
+		})
 	}
 
 	// Add zero bucket if needed

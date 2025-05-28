@@ -2,6 +2,9 @@ package reveald
 
 import (
 	"time"
+
+	"github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 )
 
 // Result is a construct containing the search result, Elasticsearch aggregations, and metadata.
@@ -30,6 +33,7 @@ import (
 //	    }
 //	}
 type Result struct {
+	response      *search.Response
 	request       *Request
 	TotalHitCount int64
 	Hits          []map[string]any
@@ -37,6 +41,18 @@ type Result struct {
 	Pagination    *ResultPagination
 	Sorting       *ResultSorting
 	Duration      time.Duration
+}
+
+func (r *Result) RawResult() *search.Response {
+	return r.response
+}
+
+func (r *Result) RawAggregations() map[string]types.Aggregate {
+	if r == nil {
+		return make(map[string]types.Aggregate)
+	}
+
+	return r.response.Aggregations
 }
 
 // Request returns the executed request that produced this result.

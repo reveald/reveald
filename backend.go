@@ -3,14 +3,14 @@ package reveald
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/elastic/go-elasticsearch/v8"
-	"github.com/elastic/go-elasticsearch/v8/esapi"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 )
 
 // ElasticBackend defines an Elasticsearch backend for Reveald.
@@ -19,7 +19,7 @@ import (
 // The ElasticBackend is responsible for translating Reveald queries into
 // Elasticsearch requests and processing the responses.
 type ElasticBackend struct {
-	client *elasticsearch.Client
+	client *elasticsearch.TypedClient
 	config elasticsearch.Config
 }
 
@@ -184,7 +184,7 @@ func WithRetrier(retrier any) ElasticBackendOption {
 	return func(b *ElasticBackend) {
 		// The retry logic is different in the official client
 		// We can configure max retries and retry on status
-		if r, ok := retrier.(func(*elasticsearch.Client)); ok {
+		if r, ok := retrier.(func(*elasticsearch.TypedClient)); ok {
 			r(b.client)
 		}
 	}
@@ -233,7 +233,7 @@ func NewElasticBackend(nodes []string, opts ...ElasticBackendOption) (*ElasticBa
 	}
 
 	// Create the client
-	client, err := elasticsearch.NewClient(backend.config)
+	client, err := elasticsearch.NewTypedClient(backend.config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Elasticsearch client: %w", err)
 	}
@@ -251,63 +251,45 @@ func NewElasticBackend(nodes []string, opts ...ElasticBackendOption) (*ElasticBa
 //
 //	client := backend.GetClient()
 //	res, err := client.Info()
-func (b *ElasticBackend) GetClient() *elasticsearch.Client {
+func (b *ElasticBackend) GetClient() *elasticsearch.TypedClient {
 	return b.client
 }
 
-func mapSearchResult(res *esapi.Response, req *QueryBuilder) (*Result, error) {
-	if res.IsError() {
-		return nil, fmt.Errorf("elasticsearch request failed: %s", res.String())
-	}
-
-	var searchResponse map[string]any
-	if err := json.NewDecoder(res.Body).Decode(&searchResponse); err != nil {
-		return nil, fmt.Errorf("error parsing the response body: %s", err)
-	}
-	defer res.Body.Close()
-
-	hitsObj, found := searchResponse["hits"].(map[string]any)
-	if !found {
-		return nil, errors.New("malformed search response: missing 'hits' object")
-	}
-
+func mapSearchResult(res search.Response, req *QueryBuilder) (*Result, error) {
 	totalHits := int64(0)
-	if total, found := hitsObj["total"].(map[string]any); found {
-		if value, ok := total["value"].(float64); ok {
-			totalHits = int64(value)
-		}
+	if res.Hits.Total != nil {
+		totalHits = res.Hits.Total.Value
 	}
 
 	var hits []map[string]any
-	if hitsArray, found := hitsObj["hits"].([]any); found {
-		for _, hit := range hitsArray {
-			hitObj, ok := hit.(map[string]any)
-			if !ok {
+	if len(res.Hits.Hits) > 0 {
+		for _, hit := range res.Hits.Hits {
+			b, err := json.Marshal(hit.Source_)
+			if err != nil {
+				continue
+			}
+			var source map[string]any
+			if err := json.Unmarshal(b, &source); err != nil {
 				continue
 			}
 
-			// Start with _source if available, otherwise create empty map
-			source, foundSource := hitObj["_source"].(map[string]any)
-			if !foundSource {
-				source = make(map[string]any)
-			}
-
-			// Add fields if present (this includes script fields)
-			if fields, foundFields := hitObj["fields"].(map[string]any); foundFields {
-				for field, value := range fields {
-					list, ok := value.([]any)
-					if ok && len(list) > 0 {
-						source[field] = list[0]
-					} else {
-						source[field] = value
+			if hit.Fields != nil {
+				for key, value := range hit.Fields {
+					b, err := value.MarshalJSON()
+					if err != nil {
+						continue
+					}
+					var field []any
+					if err := json.Unmarshal(b, &field); err != nil {
+						continue
+					}
+					for _, v := range field {
+						source[key] = v
 					}
 				}
 			}
 
-			// Only add the hit if we have either _source or fields
-			if foundSource || len(source) > 0 {
-				hits = append(hits, source)
-			}
+			hits = append(hits, source)
 		}
 	}
 
@@ -315,23 +297,24 @@ func mapSearchResult(res *esapi.Response, req *QueryBuilder) (*Result, error) {
 		hits = []map[string]any{}
 	}
 
-	// Process aggregations if present
-	aggregations := make(map[string][]*ResultBucket)
-	if aggsObj, found := searchResponse["aggregations"].(map[string]any); found {
-		for name, agg := range aggsObj {
-			if buckets := extractBuckets(agg); len(buckets) > 0 {
-				aggregations[name] = buckets
-			}
-		}
-	}
+	// // Process aggregations if present
+	// aggregations := make(map[string][]*ResultBucket)
+	// if aggsObj, found := searchResponse["aggregations"].(map[string]any); found {
+	// 	for name, agg := range aggsObj {
+	// 		if buckets := extractBuckets(agg); len(buckets) > 0 {
+	// 			aggregations[name] = buckets
+	// 		}
+	// 	}
+	// }
 
 	return &Result{
+		response:      &res,
 		request:       req.Request(),
 		TotalHitCount: totalHits,
 		Hits:          hits,
 		Pagination:    nil,
 		Sorting:       nil,
-		Aggregations:  aggregations,
+		Aggregations:  make(map[string][]*ResultBucket),
 	}, nil
 }
 
@@ -402,22 +385,67 @@ func extractBuckets(agg any) []*ResultBucket {
 //	for _, hit := range result.Hits {
 //	    fmt.Printf("Document: %v\n", hit)
 //	}
+
+type runtimeFieldsCaster struct {
+	runtimeFields map[string]types.RuntimeField
+}
+
+func (r *runtimeFieldsCaster) RuntimeFieldsCaster() *types.RuntimeFields {
+	f := types.RuntimeFields(r.runtimeFields)
+	return &f
+}
+
+type fieldAndFormatCaster struct {
+	fieldAndFormat types.FieldAndFormat
+}
+
+func (f *fieldAndFormatCaster) FieldAndFormatCaster() *types.FieldAndFormat {
+	return &f.fieldAndFormat
+}
+
+type sortCaster struct {
+	sort types.SortCombinations
+}
+
+func (s *sortCaster) SortCombinationsCaster() *types.SortCombinations {
+	return &s.sort
+}
+
+func sorts(sort []types.SortCombinations) []types.SortCombinationsVariant {
+	sorts := make([]types.SortCombinationsVariant, 0, len(sort))
+	for _, s := range sort {
+		sorts = append(sorts, &sortCaster{sort: s})
+	}
+	return sorts
+}
+
 func (b *ElasticBackend) Execute(ctx context.Context, builder *QueryBuilder) (*Result, error) {
-	searchBody, err := json.Marshal(builder.Build())
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling search body: %w", err)
+	docvalueFields := make([]types.FieldAndFormatVariant, 0, len(builder.docValueFields))
+	for _, field := range builder.docValueFields {
+		docvalueFields = append(docvalueFields, &fieldAndFormatCaster{fieldAndFormat: field})
 	}
 
-	res, err := b.client.Search(
-		b.client.Search.WithContext(ctx),
-		b.client.Search.WithIndex(builder.Indices()...),
-		b.client.Search.WithBody(strings.NewReader(string(searchBody))),
-	)
+	res, err := b.client.Search().
+		Index(strings.Join(builder.Indices(), ",")).
+		Query(builder.RawQuery()).
+		Size(builder.Selection().pageSize).
+		From(builder.Selection().offset).
+		Sort(sorts(builder.Selection().sort)...).
+		Aggregations(builder.aggregations).
+		SourceExcludes_(builder.Selection().exclusions...).
+		SourceIncludes_(builder.Selection().inclusions...).
+		ScriptFields(builder.scriptFields).
+		DocvalueFields(docvalueFields...).
+		RuntimeMappings(&runtimeFieldsCaster{runtimeFields: builder.runtimeFields}).
+		Do(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("elasticsearch request failed: %w", err)
 	}
+	if res == nil {
+		return nil, fmt.Errorf("no response from elasticsearch")
+	}
 
-	return mapSearchResult(res, builder)
+	return mapSearchResult(*res, builder)
 }
 
 // ExecuteMultiple runs multiple queries against Elasticsearch in parallel and returns the results.

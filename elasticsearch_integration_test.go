@@ -493,9 +493,15 @@ func TestElasticsearchPagination(t *testing.T) {
 	builder := NewQueryBuilder(request, indexName)
 
 	builder.With(types.Query{
-		Match: map[string]types.MatchQuery{
-			"category": {
-				Query: "electronics",
+		Bool: &types.BoolQuery{
+			Must: []types.Query{
+				{
+					Term: map[string]types.TermQuery{
+						"category": {
+							Value: "electronics",
+						},
+					},
+				},
 			},
 		},
 	})

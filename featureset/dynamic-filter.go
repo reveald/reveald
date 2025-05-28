@@ -157,10 +157,17 @@ func (dff *DynamicFilterFeature) build(builder *reveald.QueryBuilder) {
 }
 
 func (dff *DynamicFilterFeature) handle(result *reveald.Result) (*reveald.Result, error) {
-	buckets, ok := result.Aggregations[dff.property]
+	agg, ok := result.RawAggregations()[dff.property]
 	if !ok {
 		return result, nil
 	}
+
+	terms, ok := agg.(*types.StringTermsAggregate)
+	if !ok {
+		return result, nil
+	}
+
+	buckets := terms.Buckets.([]types.StringTermsBucket)
 
 	// For nested aggregations, the buckets might need to be extracted from
 	// a different place in the aggregation response
@@ -169,6 +176,16 @@ func (dff *DynamicFilterFeature) handle(result *reveald.Result) (*reveald.Result
 		// sub-aggregations. This depends on the specific shape of the response
 		// which might require additional handling
 	}
+
+	var resultBuckets []*reveald.ResultBucket
+	for _, bucket := range buckets {
+		resultBuckets = append(resultBuckets, &reveald.ResultBucket{
+			Value:    bucket.Key,
+			HitCount: bucket.DocCount,
+		})
+	}
+
+	result.Aggregations[dff.property] = resultBuckets
 
 	return result, nil
 }

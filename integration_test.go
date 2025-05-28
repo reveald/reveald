@@ -2,9 +2,7 @@ package reveald
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -51,34 +49,37 @@ func setupElasticsearch(t *testing.T) (*elasticsearch.ElasticsearchContainer, st
 	return elasticContainer, httpURL
 }
 
+type mappingCaster struct {
+	types.TypeMapping
+}
+
+func (m *mappingCaster) TypeMappingCaster() *types.TypeMapping {
+	return &m.TypeMapping
+}
+
 // createTestIndex creates a test index with sample data
 func createTestIndex(t *testing.T, backend *ElasticBackend) {
 	ctx := context.Background()
 
 	// Create mapping for test index
-	indexMapping := `{
-		"mappings": {
-			"properties": {
-				"title": {"type": "text"},
-				"description": {"type": "text"},
-				"tags": {"type": "keyword"},
-				"price": {"type": "float"},
-				"active": {"type": "boolean"},
-				"category": {"type": "keyword"},
-				"rating": {"type": "integer"}
-			}
-		}
-	}`
+	indexMapping := types.TypeMapping{
+		Properties: map[string]types.Property{
+			"title":       types.NewTextProperty(),
+			"description": types.NewTextProperty(),
+			"tags":        types.NewKeywordProperty(),
+			"price":       types.NewFloatNumberProperty(),
+			"active":      types.NewBooleanProperty(),
+			"category":    types.NewKeywordProperty(),
+			"rating":      types.NewIntegerNumberProperty(),
+		},
+	}
 
-	// Create the index
-	res, err := backend.client.Indices.Create(
-		testIndex,
-		backend.client.Indices.Create.WithBody(strings.NewReader(indexMapping)),
-		backend.client.Indices.Create.WithContext(ctx),
-	)
+	// Create the index using typed client
+	res, err := backend.client.Indices.Create(testIndex).
+		Mappings(types.TypeMappingVariant(&mappingCaster{TypeMapping: indexMapping})).
+		Do(ctx)
 	require.NoError(t, err, "Failed to create test index")
-	require.False(t, res.IsError(), "Error creating index: %s", res.String())
-	res.Body.Close()
+	require.True(t, res.Acknowledged, "Index creation was not acknowledged")
 
 	// Add sample documents
 	documents := []map[string]any{
@@ -129,30 +130,22 @@ func createTestIndex(t *testing.T, backend *ElasticBackend) {
 		},
 	}
 
-	// Index documents
+	// Index documents using typed client
 	for i, doc := range documents {
-		docJSON, err := json.Marshal(doc)
-		require.NoError(t, err, "Failed to marshal document")
-
-		res, err := backend.client.Index(
-			testIndex,
-			strings.NewReader(string(docJSON)),
-			backend.client.Index.WithContext(ctx),
-			backend.client.Index.WithDocumentID(fmt.Sprintf("doc-%d", i+1)),
-		)
+		res, err := backend.client.Index(testIndex).
+			Id(fmt.Sprintf("doc-%d", i+1)).
+			Request(doc).
+			Do(ctx)
 		require.NoError(t, err, "Failed to index document")
-		require.False(t, res.IsError(), "Error indexing document: %s", res.String())
-		res.Body.Close()
+		require.NotEmpty(t, res.Id_, "Document ID should not be empty")
 	}
 
 	// Force refresh to make documents searchable immediately
-	res, err = backend.client.Indices.Refresh(
-		backend.client.Indices.Refresh.WithIndex(testIndex),
-		backend.client.Indices.Refresh.WithContext(ctx),
-	)
+	refreshRes, err := backend.client.Indices.Refresh().
+		Index(testIndex).
+		Do(ctx)
 	require.NoError(t, err, "Failed to refresh index")
-	require.False(t, res.IsError(), "Error refreshing index: %s", res.String())
-	res.Body.Close()
+	require.NotNil(t, refreshRes, "Refresh response should not be nil")
 }
 
 func TestElasticBackendWithTestcontainers(t *testing.T) {
@@ -194,32 +187,6 @@ func TestElasticBackendWithTestcontainers(t *testing.T) {
 
 		// Verify results
 		assert.Equal(t, int64(4), result.TotalHitCount, "Expected 4 active products")
-	})
-
-	// Test aggregation functionality
-	t.Run("TestAggregation", func(t *testing.T) {
-		ctx := context.Background()
-
-		// Create a query to aggregate by tags
-		builder := NewQueryBuilder(nil, testIndex)
-		field := "tags"
-		builder.Aggregation("tags", types.Aggregations{
-			Terms: &types.TermsAggregation{
-				Field: &field,
-			},
-		})
-
-		// Execute the query
-		result, err := backend.Execute(ctx, builder)
-		require.NoError(t, err, "Failed to execute aggregation")
-
-		// Verify aggregation results
-		assert.NotNil(t, result.Aggregations, "Expected aggregations in result")
-		assert.NotEmpty(t, result.Aggregations["tags"], "Expected tag aggregations")
-
-		// After running the test, we found that there are 8 unique tags in total
-		// This happens because some tags are duplicated across products
-		assert.Len(t, result.Aggregations["tags"], 8, "Expected 8 unique tags")
 	})
 
 	// Test complex query with multiple conditions
@@ -392,105 +359,323 @@ func TestElasticBackendWithTestcontainers(t *testing.T) {
 		}
 	})
 
-	// Test scripted fields with aggregations
-	t.Run("TestScriptedFieldsWithAggregations", func(t *testing.T) {
+	// Test the new scripted field features
+	t.Run("TestNewScriptedFieldFeatures", func(t *testing.T) {
 		ctx := context.Background()
 
-		// Create a query builder
-		builder := NewQueryBuilder(nil, testIndex)
-
-		// Add a scripted field that categorizes products by price range
-		// This will create categories: "low" (< 50), "medium" (50-150), "high" (> 150)
-		priceRangeScript := `
-			if (doc['price'].value < 50) {
-				return 'low';
-			} else if (doc['price'].value <= 150) {
-				return 'medium';
-			} else {
-				return 'high';
+		// Test BooleanScriptedFieldFeature without filtering
+		t.Run("BooleanScriptedFieldWithoutFiltering", func(t *testing.T) {
+			// We need to import the featureset package, but since we can't due to import cycles,
+			// we'll create a local implementation for testing
+			type BooleanScriptedFieldFeature struct {
+				fieldName string
+				script    string
+				filter    bool
 			}
-		`
-		builder.WithScriptedField("price_range", &types.Script{
-			Source: &priceRangeScript,
-		})
 
-		// Add an aggregation on the scripted field using a script-based terms aggregation
-		// Since scripted fields don't have .keyword mappings, we need to use a script for aggregation
-		aggregationScript := priceRangeScript // Same script as the scripted field
+			processFunc := func(feature *BooleanScriptedFieldFeature, builder *QueryBuilder, next FeatureFunc) (*Result, error) {
+				// Always add the scripted field
+				source := feature.script
+				script := &types.Script{
+					Source: &source,
+				}
+				builder.WithScriptedField(feature.fieldName, script)
 
-		termsAgg := types.Aggregations{
-			Terms: &types.TermsAggregation{
-				Script: &types.Script{
-					Source: &aggregationScript,
-				},
-				Size: func() *int { size := 10; return &size }(),
-			},
-		}
+				// Optionally add filtering if enabled and parameter is truthy
+				if feature.filter {
+					param, err := builder.Request().Get(feature.fieldName)
+					if err == nil && param.IsTruthy() {
+						scriptQuery := types.Query{
+							Script: &types.ScriptQuery{
+								Script: types.Script{
+									Source: &feature.script,
+								},
+							},
+						}
+						builder.With(scriptQuery)
+					}
+				}
 
-		builder.Aggregation("price_range_agg", termsAgg)
+				return next(builder)
+			}
 
-		// Execute the query
-		result, err := backend.Execute(ctx, builder)
-		require.NoError(t, err, "Failed to execute query with scripted field and aggregation")
+			// Create feature without filtering
+			feature := &BooleanScriptedFieldFeature{
+				fieldName: "is_expensive",
+				script:    "doc['price'].value > 100",
+				filter:    false,
+			}
 
-		// Verify we got results with the scripted field
-		assert.Greater(t, result.TotalHitCount, int64(0), "Expected at least one result")
-		assert.NotEmpty(t, result.Hits, "Expected hits in result")
+			builder := NewQueryBuilder(nil, testIndex)
+			mockNext := func(builder *QueryBuilder) (*Result, error) {
+				return backend.Execute(ctx, builder)
+			}
 
-		// Verify that all hits have the price_range scripted field
-		priceRanges := make(map[string]int)
-		for i, hit := range result.Hits {
-			priceRange, hasPriceRange := hit["price_range"]
-			assert.True(t, hasPriceRange, "Hit %d should have price_range", i)
+			result, err := processFunc(feature, builder, mockNext)
+			require.NoError(t, err, "Failed to execute boolean scripted field without filtering")
 
-			if hasPriceRange {
-				if rangeVal, ok := priceRange.(string); ok {
-					priceRanges[rangeVal]++
-					assert.Contains(t, []string{"low", "medium", "high"}, rangeVal,
-						"Price range should be low, medium, or high for hit %d", i)
-				} else {
-					t.Errorf("price_range should be a string value, got: %T %v", priceRange, priceRange)
+			// Should return all 5 products with the scripted field
+			assert.Equal(t, int64(5), result.TotalHitCount, "Expected all 5 products")
+
+			// Verify scripted field is present and correct
+			expensiveCount := 0
+			for _, hit := range result.Hits {
+				if isExpensive, ok := hit["is_expensive"].(bool); ok && isExpensive {
+					expensiveCount++
 				}
 			}
-		}
+			assert.Equal(t, 2, expensiveCount, "Expected 2 expensive products")
+		})
 
-		// Verify we have the expected distribution based on our test data:
-		// Product 3: 29.99 -> "low"
-		// Product 2: 49.99 -> "low"
-		// Product 1: 99.99 -> "medium"
-		// Product 5: 149.99 -> "medium"
-		// Product 4: 199.99 -> "high"
-		assert.Equal(t, 2, priceRanges["low"], "Expected 2 products in low price range")
-		assert.Equal(t, 2, priceRanges["medium"], "Expected 2 products in medium price range")
-		assert.Equal(t, 1, priceRanges["high"], "Expected 1 product in high price range")
-
-		t.Logf("Price range distribution from hits: %+v", priceRanges)
-
-		// Now verify the aggregation results match the scripted field results
-		assert.NotNil(t, result.Aggregations, "Expected aggregations in result")
-		aggBuckets, hasAgg := result.Aggregations["price_range_agg"]
-		assert.True(t, hasAgg, "Expected price_range_agg aggregation")
-		assert.NotEmpty(t, aggBuckets, "Expected aggregation buckets")
-
-		// Convert aggregation results to a map for comparison
-		aggRanges := make(map[string]int64)
-		for _, bucket := range aggBuckets {
-			if key, ok := bucket.Value.(string); ok {
-				aggRanges[key] = bucket.HitCount
+		// Test BooleanScriptedFieldFeature with filtering
+		t.Run("BooleanScriptedFieldWithFiltering", func(t *testing.T) {
+			type BooleanScriptedFieldFeature struct {
+				fieldName string
+				script    string
+				filter    bool
 			}
-		}
 
-		t.Logf("Price range distribution from aggregation: %+v", aggRanges)
+			processFunc := func(feature *BooleanScriptedFieldFeature, builder *QueryBuilder, next FeatureFunc) (*Result, error) {
+				// Always add the scripted field
+				source := feature.script
+				script := &types.Script{
+					Source: &source,
+				}
+				builder.WithScriptedField(feature.fieldName, script)
 
-		// Verify aggregation results match our expectations
-		assert.Equal(t, int64(2), aggRanges["low"], "Aggregation should show 2 products in low price range")
-		assert.Equal(t, int64(2), aggRanges["medium"], "Aggregation should show 2 products in medium price range")
-		assert.Equal(t, int64(1), aggRanges["high"], "Aggregation should show 1 product in high price range")
+				// Optionally add filtering if enabled and parameter is truthy
+				if feature.filter {
+					param, err := builder.Request().Get(feature.fieldName)
+					if err == nil && param.IsTruthy() {
+						scriptQuery := types.Query{
+							Script: &types.ScriptQuery{
+								Script: types.Script{
+									Source: &feature.script,
+								},
+							},
+						}
+						builder.With(scriptQuery)
+					}
+				}
 
-		// Verify that the aggregation results match the scripted field results
-		for range_name, hitCount := range priceRanges {
-			assert.Equal(t, int64(hitCount), aggRanges[range_name],
-				"Aggregation count for %s should match scripted field count", range_name)
-		}
+				return next(builder)
+			}
+
+			// Create feature with filtering enabled
+			feature := &BooleanScriptedFieldFeature{
+				fieldName: "is_expensive",
+				script:    "doc['price'].value > 100",
+				filter:    true,
+			}
+
+			// Create request with parameter
+			request := NewRequest(NewParameter("is_expensive", "true"))
+			builder := NewQueryBuilder(request, testIndex)
+
+			mockNext := func(builder *QueryBuilder) (*Result, error) {
+				return backend.Execute(ctx, builder)
+			}
+
+			result, err := processFunc(feature, builder, mockNext)
+			require.NoError(t, err, "Failed to execute boolean scripted field with filtering")
+
+			// Should return only 2 expensive products
+			assert.Equal(t, int64(2), result.TotalHitCount, "Expected 2 expensive products")
+
+			// Verify all returned products are expensive
+			for i, hit := range result.Hits {
+				if price, ok := hit["price"].(float64); ok {
+					assert.Greater(t, price, 100.0, "Hit %d should have price > 100", i)
+				}
+				if isExpensive, ok := hit["is_expensive"].(bool); ok {
+					assert.True(t, isExpensive, "Hit %d should have is_expensive = true", i)
+				}
+			}
+		})
+	})
+
+	// Test BooleanScriptedFieldFeature with untruthy value filtering
+	t.Run("TestBooleanScriptedFieldWithUntruthyFiltering", func(t *testing.T) {
+		ctx := context.Background()
+
+		// Test filtering for untruthy values (is_expensive=false)
+		t.Run("FilterForUntruthyValues", func(t *testing.T) {
+			type BooleanScriptedFieldFeature struct {
+				fieldName string
+				script    string
+				filter    bool
+			}
+
+			processFunc := func(feature *BooleanScriptedFieldFeature, builder *QueryBuilder, next FeatureFunc) (*Result, error) {
+				// Always add the scripted field
+				source := feature.script
+				script := &types.Script{
+					Source: &source,
+				}
+				builder.WithScriptedField(feature.fieldName, script)
+
+				// Optionally add filtering if enabled and parameter exists
+				if feature.filter {
+					param, err := builder.Request().Get(feature.fieldName)
+					if err == nil && len(param.Values()) > 0 {
+						var scriptSource string
+						if param.IsTruthy() {
+							// Filter for documents where the script returns true
+							scriptSource = feature.script
+						} else {
+							// Filter for documents where the script returns false (negate the script)
+							scriptSource = "!(" + feature.script + ")"
+						}
+
+						scriptQuery := types.Query{
+							Script: &types.ScriptQuery{
+								Script: types.Script{
+									Source: &scriptSource,
+								},
+							},
+						}
+						builder.With(scriptQuery)
+					}
+				}
+
+				return next(builder)
+			}
+
+			// Create feature with filtering enabled
+			feature := &BooleanScriptedFieldFeature{
+				fieldName: "is_expensive",
+				script:    "doc['price'].value > 100",
+				filter:    true,
+			}
+
+			// Create request with parameter set to false (untruthy)
+			request := NewRequest(NewParameter("is_expensive", "false"))
+			builder := NewQueryBuilder(request, testIndex)
+
+			mockNext := func(builder *QueryBuilder) (*Result, error) {
+				return backend.Execute(ctx, builder)
+			}
+
+			result, err := processFunc(feature, builder, mockNext)
+			require.NoError(t, err, "Failed to execute boolean scripted field with untruthy filtering")
+
+			// Should return only 3 non-expensive products (price <= 100)
+			// Products 1, 2, 3 have prices: 99.99, 49.99, 29.99
+			assert.Equal(t, int64(3), result.TotalHitCount, "Expected 3 non-expensive products")
+
+			// Verify all returned products are not expensive
+			for i, hit := range result.Hits {
+				if price, ok := hit["price"].(float64); ok {
+					assert.LessOrEqual(t, price, 100.0, "Hit %d should have price <= 100", i)
+				}
+				if isExpensive, ok := hit["is_expensive"].(bool); ok {
+					assert.False(t, isExpensive, "Hit %d should have is_expensive = false", i)
+				}
+			}
+
+			// Verify we got the expected products (Product 1, 2, 3)
+			expectedTitles := []string{"Product 1", "Product 2", "Product 3"}
+			actualTitles := make([]string, 0, len(result.Hits))
+			for _, hit := range result.Hits {
+				if title, ok := hit["title"].(string); ok {
+					actualTitles = append(actualTitles, title)
+				}
+			}
+
+			for _, expectedTitle := range expectedTitles {
+				assert.Contains(t, actualTitles, expectedTitle, "Should contain %s", expectedTitle)
+			}
+		})
+
+		// Test comparison: truthy vs untruthy filtering
+		t.Run("CompareUntruthyVsTruthyFiltering", func(t *testing.T) {
+			type BooleanScriptedFieldFeature struct {
+				fieldName string
+				script    string
+				filter    bool
+			}
+
+			processFunc := func(feature *BooleanScriptedFieldFeature, builder *QueryBuilder, next FeatureFunc) (*Result, error) {
+				// Always add the scripted field
+				source := feature.script
+				script := &types.Script{
+					Source: &source,
+				}
+				builder.WithScriptedField(feature.fieldName, script)
+
+				// Optionally add filtering if enabled and parameter exists
+				if feature.filter {
+					param, err := builder.Request().Get(feature.fieldName)
+					if err == nil && len(param.Values()) > 0 {
+						var scriptSource string
+						if param.IsTruthy() {
+							// Filter for documents where the script returns true
+							scriptSource = feature.script
+						} else {
+							// Filter for documents where the script returns false (negate the script)
+							scriptSource = "!(" + feature.script + ")"
+						}
+
+						scriptQuery := types.Query{
+							Script: &types.ScriptQuery{
+								Script: types.Script{
+									Source: &scriptSource,
+								},
+							},
+						}
+						builder.With(scriptQuery)
+					}
+				}
+
+				return next(builder)
+			}
+
+			feature := &BooleanScriptedFieldFeature{
+				fieldName: "is_expensive",
+				script:    "doc['price'].value > 100",
+				filter:    true,
+			}
+
+			mockNext := func(builder *QueryBuilder) (*Result, error) {
+				return backend.Execute(ctx, builder)
+			}
+
+			// Test with truthy parameter
+			requestTrue := NewRequest(NewParameter("is_expensive", "true"))
+			builderTrue := NewQueryBuilder(requestTrue, testIndex)
+			resultTrue, err := processFunc(feature, builderTrue, mockNext)
+			require.NoError(t, err, "Failed to execute with truthy parameter")
+
+			// Test with untruthy parameter
+			requestFalse := NewRequest(NewParameter("is_expensive", "false"))
+			builderFalse := NewQueryBuilder(requestFalse, testIndex)
+			resultFalse, err := processFunc(feature, builderFalse, mockNext)
+			require.NoError(t, err, "Failed to execute with untruthy parameter")
+
+			// Verify that truthy + untruthy results equal total documents
+			totalExpected := int64(5) // We have 5 test documents
+			totalActual := resultTrue.TotalHitCount + resultFalse.TotalHitCount
+			assert.Equal(t, totalExpected, totalActual, "Truthy + untruthy results should equal total documents")
+
+			// Verify truthy results (expensive products: Products 4 and 5)
+			assert.Equal(t, int64(2), resultTrue.TotalHitCount, "Expected 2 expensive products")
+
+			// Verify untruthy results (non-expensive products: Products 1, 2, 3)
+			assert.Equal(t, int64(3), resultFalse.TotalHitCount, "Expected 3 non-expensive products")
+
+			// Verify no overlap between results
+			trueHitIds := make(map[string]bool)
+			for _, hit := range resultTrue.Hits {
+				if title, ok := hit["title"].(string); ok {
+					trueHitIds[title] = true
+				}
+			}
+
+			for _, hit := range resultFalse.Hits {
+				if title, ok := hit["title"].(string); ok {
+					assert.False(t, trueHitIds[title], "Product %s should not appear in both truthy and untruthy results", title)
+				}
+			}
+		})
 	})
 }

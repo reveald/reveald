@@ -359,6 +359,11 @@ func (qb *QueryBuilder) WithScriptedField(field string, script *types.Script) {
 //	})
 func (qb *QueryBuilder) WithRuntimeMappings(runtimeMappings map[string]types.RuntimeField) {
 	maps.Copy(qb.runtimeFields, runtimeMappings)
+	for key := range runtimeMappings {
+		qb.docValueFields = append(qb.docValueFields, types.FieldAndFormat{
+			Field: key,
+		})
+	}
 }
 
 // DocvalueFields specifies which fields to return as doc_value_fields in the response.

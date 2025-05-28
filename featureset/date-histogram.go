@@ -363,22 +363,32 @@ func (dhf *DateHistogramFeature) build(builder *reveald.QueryBuilder) {
 }
 
 func (dhf *DateHistogramFeature) handle(result *reveald.Result) (*reveald.Result, error) {
-	agg, ok := result.Aggregations[dhf.property]
+	agg, ok := result.RawAggregations()[dhf.property]
 	if !ok {
 		return result, nil
 	}
 
-	var buckets []*reveald.ResultBucket
-	for _, bucket := range agg {
-		if bucket.HitCount == 0 && !dhf.zerobucket {
+	histogram, ok := agg.(types.DateHistogramAggregate)
+	if !ok {
+		return result, nil
+	}
+
+	buckets, ok := histogram.Buckets.([]types.DateHistogramBucket)
+	if !ok {
+		return result, nil
+	}
+
+	var resultBuckets []*reveald.ResultBucket
+	for _, bucket := range buckets {
+		if bucket.DocCount == 0 && !dhf.zerobucket {
 			continue
 		}
-		buckets = append(buckets, &reveald.ResultBucket{
-			Value:    bucket.Value,
-			HitCount: bucket.HitCount,
+		resultBuckets = append(resultBuckets, &reveald.ResultBucket{
+			Value:    bucket.Key,
+			HitCount: bucket.DocCount,
 		})
 	}
 
-	result.Aggregations[dhf.property] = buckets
+	result.Aggregations[dhf.property] = resultBuckets
 	return result, nil
 }
