@@ -198,9 +198,12 @@ func (hf *HistogramFeature) handle(result *reveald.Result) (*reveald.Result, err
 		return result, nil
 	}
 
-	histogram, ok := agg.(types.HistogramAggregate)
+	histogram, ok := agg.(*types.HistogramAggregate)
+	if !ok {
+		return result, nil
+	}
 
-	buckets := histogram.Buckets.([]types.HistogramBucket)
+	buckets, ok := histogram.Buckets.([]types.HistogramBucket)
 	if !ok {
 		return result, nil
 	}
