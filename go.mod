@@ -1,9 +1,9 @@
 module github.com/reveald/reveald
 
-go 1.24
+go 1.25
 
 require (
-	github.com/elastic/go-elasticsearch/v8 v8.18.0
+	github.com/elastic/go-elasticsearch/v8 v8.19.0
 	github.com/stretchr/testify v1.10.0
 	github.com/testcontainers/testcontainers-go v0.37.0
 	github.com/testcontainers/testcontainers-go/modules/elasticsearch v0.35.0

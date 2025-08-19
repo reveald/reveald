@@ -411,8 +411,8 @@ func (s *sortCaster) SortCombinationsCaster() *types.SortCombinations {
 	return &s.sort
 }
 
-func sorts(sort []types.SortCombinations) []types.SortCombinationsVariant {
-	sorts := make([]types.SortCombinationsVariant, 0, len(sort))
+func sorts(sort []types.SortCombinations) []types.SortCombinations {
+	sorts := make([]types.SortCombinations, 0, len(sort))
 	for _, s := range sort {
 		sorts = append(sorts, &sortCaster{sort: s})
 	}
@@ -420,9 +420,9 @@ func sorts(sort []types.SortCombinations) []types.SortCombinationsVariant {
 }
 
 func (b *ElasticBackend) Execute(ctx context.Context, builder *QueryBuilder) (*Result, error) {
-	docvalueFields := make([]types.FieldAndFormatVariant, 0, len(builder.docValueFields))
+	docvalueFields := make([]types.FieldAndFormat, 0, len(builder.docValueFields))
 	for _, field := range builder.docValueFields {
-		docvalueFields = append(docvalueFields, &fieldAndFormatCaster{fieldAndFormat: field})
+		docvalueFields = append(docvalueFields, field)
 	}
 
 	res, err := b.client.Search().
@@ -436,7 +436,7 @@ func (b *ElasticBackend) Execute(ctx context.Context, builder *QueryBuilder) (*R
 		SourceIncludes_(builder.Selection().inclusions...).
 		ScriptFields(builder.scriptFields).
 		DocvalueFields(docvalueFields...).
-		RuntimeMappings(&runtimeFieldsCaster{runtimeFields: builder.runtimeFields}).
+		RuntimeMappings(builder.runtimeFields).
 		Do(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("elasticsearch request failed: %w", err)

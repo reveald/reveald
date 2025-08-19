@@ -76,7 +76,7 @@ func createTestIndex(t *testing.T, backend *ElasticBackend) {
 
 	// Create the index using typed client
 	res, err := backend.client.Indices.Create(testIndex).
-		Mappings(types.TypeMappingVariant(&mappingCaster{TypeMapping: indexMapping})).
+		Mappings(&indexMapping).
 		Do(ctx)
 	require.NoError(t, err, "Failed to create test index")
 	require.True(t, res.Acknowledged, "Index creation was not acknowledged")
