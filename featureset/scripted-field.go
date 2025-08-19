@@ -1,7 +1,7 @@
 package featureset
 
 import (
-	"github.com/olivere/elastic/v7"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 	"github.com/reveald/reveald"
 )
 
@@ -20,5 +20,11 @@ func (sff *ScriptedFieldFeature) Process(builder *reveald.QueryBuilder, next rev
 }
 
 func (sff *ScriptedFieldFeature) build(builder *reveald.QueryBuilder) {
-	builder.WithScriptedField(elastic.NewScriptField(sff.fieldName, elastic.NewScript(sff.script)))
+	// Create script directly with typed objects
+	source := sff.script
+	script := &types.Script{
+		Source: &source,
+	}
+
+	builder.WithScriptedField(sff.fieldName, script)
 }

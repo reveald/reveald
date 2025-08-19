@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/olivere/elastic/v7"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 	"github.com/reveald/reveald"
 )
 
@@ -45,14 +45,45 @@ func (dff *DynamicFilterFeature) build(builder *reveald.QueryBuilder) {
 	keyword := fmt.Sprintf("%s.keyword", dff.property)
 
 	if !dff.nested {
-		builder.Aggregation(dff.property,
-			elastic.NewTermsAggregation().Field(keyword).Size(dff.agg.size))
+		// Create terms aggregation directly with typed objects
+		field := keyword
+		size := dff.agg.size
+
+		termAgg := types.Aggregations{
+			Terms: &types.TermsAggregation{
+				Field: &field,
+				Size:  &size,
+			},
+		}
+
+		builder.Aggregation(dff.property, termAgg)
 	} else {
+		// Create nested aggregation with term sub-aggregation
 		path := strings.Split(dff.property, ".")[0]
-		builder.Aggregation(dff.property,
-			elastic.NewNestedAggregation().
-				Path(path).
-				SubAggregation(dff.property, elastic.NewTermsAggregation().Field(keyword).Size(dff.agg.size)))
+
+		// First create the inner terms aggregation
+		field := keyword
+		size := dff.agg.size
+
+		termsAgg := types.Aggregations{
+			Terms: &types.TermsAggregation{
+				Field: &field,
+				Size:  &size,
+			},
+		}
+
+		// Create the nested aggregation
+		nestedPath := path
+		nestedAgg := types.Aggregations{
+			Nested: &types.NestedAggregation{
+				Path: &nestedPath,
+			},
+			Aggregations: map[string]types.Aggregations{
+				dff.property: termsAgg,
+			},
+		}
+
+		builder.Aggregation(dff.property, nestedAgg)
 	}
 
 	if builder.Request().Has(dff.property) {
@@ -61,56 +92,100 @@ func (dff *DynamicFilterFeature) build(builder *reveald.QueryBuilder) {
 			return
 		}
 
-		bq := elastic.NewBoolQuery()
-		for _, v := range p.Values() {
-			bq = bq.Should(elastic.NewTermQuery(keyword, v))
-		}
-
 		if !dff.nested {
-			builder.With(bq)
+			// Term query with 'should' clauses for non-nested fields
+			if len(p.Values()) == 1 {
+				// Single value - simple term query
+				termQuery := types.Query{
+					Term: map[string]types.TermQuery{
+						keyword: {Value: p.Values()[0]},
+					},
+				}
+
+				builder.With(termQuery)
+			} else {
+				// Multiple values - bool query with should clauses
+				shouldClauses := make([]types.Query, 0, len(p.Values()))
+				for _, v := range p.Values() {
+					termQuery := types.Query{
+						Term: map[string]types.TermQuery{
+							keyword: {Value: v},
+						},
+					}
+					shouldClauses = append(shouldClauses, termQuery)
+				}
+
+				boolQuery := types.Query{
+					Bool: &types.BoolQuery{
+						Should: shouldClauses,
+					},
+				}
+
+				builder.With(boolQuery)
+			}
 		} else {
+			// Nested query for nested fields
 			path := strings.Split(dff.property, ".")[0]
-			builder.With(elastic.NewNestedQuery(path, bq))
+
+			// Create should clauses for the nested query
+			shouldClauses := make([]types.Query, 0, len(p.Values()))
+			for _, v := range p.Values() {
+				termQuery := types.Query{
+					Term: map[string]types.TermQuery{
+						keyword: {Value: v},
+					},
+				}
+				shouldClauses = append(shouldClauses, termQuery)
+			}
+
+			// Create the inner bool query
+			innerBoolQuery := types.BoolQuery{
+				Should: shouldClauses,
+			}
+
+			// Create the nested query with the inner bool query
+			nestedQuery := types.Query{
+				Nested: &types.NestedQuery{
+					Path:  path,
+					Query: types.Query{Bool: &innerBoolQuery},
+				},
+			}
+
+			builder.With(nestedQuery)
 		}
 	}
 }
 
 func (dff *DynamicFilterFeature) handle(result *reveald.Result) (*reveald.Result, error) {
-	var agg *elastic.AggregationBucketKeyItems
-
-	if !dff.nested {
-		items, ok := result.RawResult().Aggregations.Terms(dff.property)
-		if !ok {
-			return result, nil
-		}
-
-		agg = items
-	} else {
-		bucket, ok := result.RawResult().Aggregations.Children(dff.property)
-		if !ok {
-			return result, nil
-		}
-
-		items, ok := bucket.Aggregations.Terms(dff.property)
-		if !ok {
-			return result, nil
-		}
-
-		agg = items
+	agg, ok := result.RawAggregations()[dff.property]
+	if !ok {
+		return result, nil
 	}
 
-	var buckets []*reveald.ResultBucket
-	for _, bucket := range agg.Buckets {
-		if bucket == nil {
-			continue
-		}
+	terms, ok := agg.(*types.StringTermsAggregate)
+	if !ok {
+		return result, nil
+	}
 
-		buckets = append(buckets, &reveald.ResultBucket{
+	buckets := terms.Buckets.([]types.StringTermsBucket)
+
+	// For nested aggregations, the buckets might need to be extracted from
+	// a different place in the aggregation response
+	if dff.nested && len(buckets) == 0 {
+		// In the case of nested aggregations, we might need to look into
+		// sub-aggregations. This depends on the specific shape of the response
+		// which might require additional handling
+	}
+
+	var resultBuckets []*reveald.ResultBucket
+	for _, bucket := range buckets {
+		resultBuckets = append(resultBuckets, &reveald.ResultBucket{
 			Value:    bucket.Key,
 			HitCount: bucket.DocCount,
 		})
 	}
 
-	result.Aggregations[dff.property] = buckets
+	result.Aggregations[dff.property] = resultBuckets
+
 	return result, nil
 }

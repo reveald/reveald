@@ -1,102 +1,240 @@
 package featureset
 
 import (
-	"errors"
+	"fmt"
 	"time"
 
-	"github.com/olivere/elastic/v7"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types/enums/calendarinterval"
 	"github.com/reveald/reveald"
 )
 
-type (
-	DateCalendarHistogramInterval string
-	DateFixedHistogramInterval    string
-)
+// DateHistogramInterval specifies the date interval size
+type DateHistogramInterval string
 
+// Common intervals
 const (
-	DateCalendarIntervalYearly  DateCalendarHistogramInterval = "year"
-	DateCalendarIntervalMonthly DateCalendarHistogramInterval = "month"
-	DateCalendarIntervalDaily   DateCalendarHistogramInterval = "day"
-
-	DateFixedIntervalDaily        DateFixedHistogramInterval = "1d"
-	DateFixedIntervalHours        DateFixedHistogramInterval = "1h"
-	DateFixedIntervalMinutes      DateFixedHistogramInterval = "1m"
-	DateFixedIntervalSeconds      DateFixedHistogramInterval = "1s"
-	DateFixedIntervalMilliseconds DateFixedHistogramInterval = "1ms"
+	Second     DateHistogramInterval = "second"
+	Minute     DateHistogramInterval = "minute"
+	Hour       DateHistogramInterval = "hour"
+	Day        DateHistogramInterval = "day"
+	Week       DateHistogramInterval = "week"
+	Month      DateHistogramInterval = "month"
+	Quarter    DateHistogramInterval = "quarter"
+	Year       DateHistogramInterval = "year"
+	Minute5    DateHistogramInterval = "5m"
+	Minute10   DateHistogramInterval = "10m"
+	Minute30   DateHistogramInterval = "30m"
+	MinuteHalf DateHistogramInterval = "30m"
+	Hour12     DateHistogramInterval = "12h"
 )
 
-const (
-	IntervalFixed    = "fixed"
-	IntervalCalendar = "calendar"
-)
-
+// DateHistogramFeature creates a date histogram aggregation for date fields.
+//
+// It groups documents based on date field values into buckets and
+// can also apply date range filters based on request parameters.
+//
+// Example:
+//
+//	// Create a basic date histogram feature for the "created_at" field
+//	dateHistogram := featureset.NewDateHistogramFeature("created_at", "yyyy-MM-dd")
+//
+//	// Use the date histogram feature in a feature chain
+//	result, err := dateHistogram.Process(builder, nextFeature)
 type DateHistogramFeature struct {
-	property      string
-	interval      string
-	dateFormat    string
-	zerobucket    bool
-	applyInterval func(*elastic.DateHistogramAggregation) *elastic.DateHistogramAggregation
+	property                string
+	interval                DateHistogramInterval
+	format                  string
+	minDocCount             int64
+	lowerThreshold          *time.Time
+	upperThreshold          *time.Time
+	extendedBounds          bool
+	keepDescendingOrder     bool
+	defaultUpperThreshold   *time.Time
+	defaultLowerThreshold   *time.Time
+	timezone                string
+	calendarIntervalInstead bool
+	query                   []string
+	zerobucket              bool
 }
 
+// DateHistogramOption is a functional option for configuring a DateHistogramFeature.
 type DateHistogramOption func(*DateHistogramFeature)
 
-func WithoutDateHistogramZeroBucket() DateHistogramOption {
+// WithDateFormat defines the date format used when returning
+// the date buckets in an aggregation
+func WithDateFormat(format string) DateHistogramOption {
 	return func(dhf *DateHistogramFeature) {
-		dhf.zerobucket = false
+		dhf.format = format
 	}
 }
 
-func WithFixedInterval(interval DateFixedHistogramInterval) DateHistogramOption {
+// WithDateTimeZone sets a time zone for the date histogram.
+//
+// Example:
+//
+//	// Create a date histogram using UTC time zone
+//	dateHistogram := featureset.NewDateHistogramFeature("created_at", "yyyy-MM-dd",
+//	    featureset.WithDateTimeZone("UTC"),
+//	)
+func WithDateTimeZone(timezone string) DateHistogramOption {
 	return func(dhf *DateHistogramFeature) {
-		dhf.interval = string(interval)
-		switch interval {
-		case DateFixedIntervalDaily:
-			dhf.dateFormat = "yyyy-MM-dd"
-		case DateFixedIntervalHours:
-			dhf.dateFormat = "yyyy-MM-dd HH"
-		case DateFixedIntervalMinutes:
-			dhf.dateFormat = "yyyy-MM-dd HH:mm"
-		case DateFixedIntervalSeconds:
-			dhf.dateFormat = "yyyy-MM-dd HH:mm:ss"
-		case DateFixedIntervalMilliseconds:
-			dhf.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+		dhf.timezone = timezone
+	}
+}
+
+// WithMinDateDocumentCount specifies how many documents must match
+// a date range for it to be included in the search result.
+//
+// Buckets with fewer documents than this threshold will be excluded from the results.
+//
+// Example:
+//
+//	// Create a date histogram that only includes buckets with at least 5 documents
+//	dateHistogram := featureset.NewDateHistogramFeature("created_at", "yyyy-MM-dd",
+//	    featureset.WithMinDateDocumentCount(5),
+//	)
+func WithMinDateDocumentCount(minDocCount int64) DateHistogramOption {
+	return func(dhf *DateHistogramFeature) {
+		dhf.minDocCount = minDocCount
+	}
+}
+
+// WithMinimumDate specifies a minimum date threshold for
+// a property to use in a search
+func WithMinimumDate(t *time.Time) DateHistogramOption {
+	return func(dhf *DateHistogramFeature) {
+		dhf.defaultLowerThreshold = t
+	}
+}
+
+// WithMaximumDate specifies a maximum date threshold for
+// a property to use in a search
+func WithMaximumDate(t *time.Time) DateHistogramOption {
+	return func(dhf *DateHistogramFeature) {
+		dhf.defaultUpperThreshold = t
+	}
+}
+
+// WithExtendedBounds generates empty buckets for a date range
+// even if no value exists in the range.
+//
+// Extended bounds ensure that buckets are created for the entire range,
+// even if there are no documents in some buckets.
+//
+// Example:
+//
+//	// Create a date histogram with extended bounds
+//	dateHistogram := featureset.NewDateHistogramFeature("created_at", "yyyy-MM-dd",
+//	    featureset.WithExtendedBounds(),
+//	    featureset.WithDefaultBounds("2020-01-01", "2020-12-31"),
+//	)
+func WithExtendedBounds() DateHistogramOption {
+	return func(dhf *DateHistogramFeature) {
+		dhf.extendedBounds = true
+	}
+}
+
+// WithDescendingOrder specifies that the bucket order starts with
+// the newest date, rather than the oldest
+func WithDescendingOrder() DateHistogramOption {
+	return func(dhf *DateHistogramFeature) {
+		dhf.keepDescendingOrder = true
+	}
+}
+
+// WithCalendarIntervalInstead specifies that we use "calendar_interval" instead of "interval" field
+func WithCalendarIntervalInstead() DateHistogramOption {
+	return func(dhf *DateHistogramFeature) {
+		dhf.calendarIntervalInstead = true
+	}
+}
+
+// WithCalendarInterval sets the calendar interval for the date histogram.
+//
+// Calendar intervals are specified as 'year', 'quarter', 'month', 'week', 'day', 'hour', 'minute', or 'second'.
+//
+// Example:
+//
+//	// Create a date histogram with monthly buckets
+//	dateHistogram := featureset.NewDateHistogramFeature("created_at", "yyyy-MM-dd",
+//	    featureset.WithCalendarInterval("month"),
+//	)
+func WithCalendarInterval(interval string) DateHistogramOption {
+	return func(dhf *DateHistogramFeature) {
+		dhf.interval = DateHistogramInterval(interval)
+	}
+}
+
+// WithFixedInterval sets the fixed interval for the date histogram.
+//
+// Fixed intervals are specified as a number followed by a time unit, e.g., '1h', '1d', '7d'.
+//
+// Example:
+//
+//	// Create a date histogram with 7-day buckets
+//	dateHistogram := featureset.NewDateHistogramFeature("created_at", "yyyy-MM-dd",
+//	    featureset.WithFixedInterval("7d"),
+//	)
+func WithFixedInterval(interval string) DateHistogramOption {
+	return func(dhf *DateHistogramFeature) {
+		dhf.interval = DateHistogramInterval(interval)
+	}
+}
+
+// WithDefaultBounds sets the default lower and upper bounds for the date histogram.
+//
+// These bounds are used when extended bounds are enabled and no range parameters are provided.
+//
+// Example:
+//
+//	// Create a date histogram with default bounds for the entire year 2020
+//	dateHistogram := featureset.NewDateHistogramFeature("created_at", "yyyy-MM-dd",
+//	    featureset.WithExtendedBounds(),
+//	    featureset.WithDefaultBounds("2020-01-01", "2020-12-31"),
+//	)
+func WithDefaultBounds(lower, upper string) DateHistogramOption {
+	return func(dhf *DateHistogramFeature) {
+		dhf.defaultLowerThreshold = &time.Time{}
+		dhf.defaultUpperThreshold = &time.Time{}
+		dhf.lowerThreshold = &time.Time{}
+		dhf.upperThreshold = &time.Time{}
+
+		if err := dhf.lowerThreshold.UnmarshalText([]byte(lower)); err != nil {
+			// If there's an error, we'll just use the zero time
+			dhf.lowerThreshold = &time.Time{}
 		}
-		dhf.applyInterval = func(agg *elastic.DateHistogramAggregation) *elastic.DateHistogramAggregation {
-			return agg.FixedInterval(string(interval))
+
+		if err := dhf.upperThreshold.UnmarshalText([]byte(upper)); err != nil {
+			// If there's an error, we'll just use the zero time
+			dhf.upperThreshold = &time.Time{}
 		}
 	}
 }
 
-func WithCalendarInterval(interval DateCalendarHistogramInterval) DateHistogramOption {
-	return func(dhf *DateHistogramFeature) {
-		dhf.interval = string(interval)
-		switch interval {
-		case DateCalendarIntervalYearly:
-			dhf.dateFormat = "yyyy"
-		case DateCalendarIntervalMonthly:
-			dhf.dateFormat = "yyyy-MM"
-		case DateCalendarIntervalDaily:
-			dhf.dateFormat = "yyyy-MM-dd"
-		}
-		dhf.applyInterval = func(agg *elastic.DateHistogramAggregation) *elastic.DateHistogramAggregation {
-			return agg.CalendarInterval(string(interval))
-		}
-	}
-}
-
-func WithRangeDateFormat(dateFormat string) DateHistogramOption {
-	return func(dhf *DateHistogramFeature) {
-		dhf.dateFormat = dateFormat
-	}
-}
-
-func NewDateHistogramFeature(property string, opts ...DateHistogramOption) *DateHistogramFeature {
+// NewDateHistogramFeature creates a new date histogram feature for the specified property and format.
+//
+// Example:
+//
+//	// Create a date histogram with custom settings
+//	dateHistogram := featureset.NewDateHistogramFeature("created_at", "yyyy-MM-dd",
+//	    featureset.WithCalendarInterval("month"),
+//	    featureset.WithDateTimeZone("UTC"),
+//	    featureset.WithMinDateDocumentCount(5),
+//	)
+func NewDateHistogramFeature(property string, interval DateHistogramInterval, opts ...DateHistogramOption) *DateHistogramFeature {
 	dhf := &DateHistogramFeature{
-		property:   property,
-		zerobucket: true,
+		property:                property,
+		interval:                interval,
+		format:                  "yyyy-MM-dd HH:mm:ss",
+		minDocCount:             0,
+		extendedBounds:          false,
+		keepDescendingOrder:     false,
+		calendarIntervalInstead: false,
+		defaultLowerThreshold:   nil,
+		defaultUpperThreshold:   nil,
+		timezone:                "",
 	}
-
-	WithCalendarInterval(DateCalendarIntervalDaily)(dhf)
 
 	for _, opt := range opts {
 		opt(dhf)
@@ -105,6 +243,15 @@ func NewDateHistogramFeature(property string, opts ...DateHistogramOption) *Date
 	return dhf
 }
 
+// Process applies the date histogram aggregation to the query builder and processes the result.
+//
+// It adds a date histogram aggregation to the query and processes any date range filters
+// from the request parameters.
+//
+// Example:
+//
+//	// Use the date histogram feature in a feature chain
+//	result, err := dateHistogram.Process(builder, nextFeature)
 func (dhf *DateHistogramFeature) Process(builder *reveald.QueryBuilder, next reveald.FeatureFunc) (*reveald.Result, error) {
 	dhf.build(builder)
 
@@ -117,106 +264,131 @@ func (dhf *DateHistogramFeature) Process(builder *reveald.QueryBuilder, next rev
 }
 
 func (dhf *DateHistogramFeature) build(builder *reveald.QueryBuilder) {
-	builder.Aggregation(dhf.property,
-		dhf.applyInterval(
-			elastic.NewDateHistogramAggregation().
-				Field(dhf.property).
-				Format(dhf.dateFormat).
-				MinDocCount(0),
-		))
+	dhf.lowerThreshold = dhf.defaultLowerThreshold
+	dhf.upperThreshold = dhf.defaultUpperThreshold
 
-	p, err := builder.Request().Get(dhf.property)
-	if err != nil {
-		return
-	}
+	if builder.Request().Has(dhf.property) {
+		p, err := builder.Request().Get(dhf.property)
+		if err == nil && p.IsRangeValue() {
+			// Create a date range query directly with typed objects
+			var dateRangeQuery types.DateRangeQuery
 
-	bq := elastic.NewBoolQuery()
+			max, wmax := p.Max()
+			if wmax {
+				// Convert float64 to string for date range
+				dateMax := fmt.Sprintf("%v", max)
+				dateRangeQuery.Lte = &dateMax
+			}
 
-	for _, v := range p.Values() {
+			min, wmin := p.Min()
+			if wmin {
+				// Convert float64 to string for date range
+				dateMin := fmt.Sprintf("%v", min)
+				dateRangeQuery.Gte = &dateMin
+			}
 
-		startValue, err := ParseTimeFrom(v, dhf.interval)
-		if err != nil {
-			return
+			// Create the full range query
+			rangeQuery := types.Query{
+				Range: map[string]types.RangeQuery{
+					dhf.property: &dateRangeQuery,
+				},
+			}
+
+			builder.With(rangeQuery)
 		}
-		endValue := IntervalEnd(startValue, dhf.interval)
-
-		q := elastic.NewRangeQuery(dhf.property)
-
-		q.Gte(startValue)
-		q.Lte(endValue)
-
-		bq = bq.Should(q)
 	}
 
-	bq = bq.MinimumShouldMatch("1")
+	// Create a date histogram aggregation directly with typed objects
+	field := dhf.property
+	format := dhf.format
+	minDocCount := int(dhf.minDocCount)
 
-	builder.With(bq)
+	// Create the base date histogram aggregation
+	dateHistogramAgg := types.Aggregations{}
+
+	// Initialize the appropriate date histogram type
+	if dhf.calendarIntervalInstead {
+		// Create a CalendarInterval with the name from the interval string
+		calendarIntervalObj := &calendarinterval.CalendarInterval{Name: string(dhf.interval)}
+		dateHistogramAgg.DateHistogram = &types.DateHistogramAggregation{
+			CalendarInterval: calendarIntervalObj,
+			Field:            &field,
+			Format:           &format,
+		}
+
+		if dhf.minDocCount > 0 {
+			dateHistogramAgg.DateHistogram.MinDocCount = &minDocCount
+		}
+
+		if dhf.timezone != "" {
+			dateHistogramAgg.DateHistogram.TimeZone = &dhf.timezone
+		}
+	} else {
+		fixedInterval := string(dhf.interval)
+		dateHistogramAgg.DateHistogram = &types.DateHistogramAggregation{
+			Interval: fixedInterval,
+			Field:    &field,
+			Format:   &format,
+		}
+
+		if dhf.minDocCount > 0 {
+			dateHistogramAgg.DateHistogram.MinDocCount = &minDocCount
+		}
+
+		if dhf.timezone != "" {
+			dateHistogramAgg.DateHistogram.TimeZone = &dhf.timezone
+		}
+	}
+
+	// Add extended bounds if needed
+	if dhf.extendedBounds && (dhf.lowerThreshold != nil || dhf.upperThreshold != nil) {
+		extendedBounds := &types.ExtendedBoundsFieldDateMath{}
+
+		if dhf.lowerThreshold != nil {
+			// Format the time as a string and use as Min
+			min := dhf.lowerThreshold.Format(time.RFC3339)
+			extendedBounds.Min = min
+		}
+
+		if dhf.upperThreshold != nil {
+			// Format the time as a string and use as Max
+			max := dhf.upperThreshold.Format(time.RFC3339)
+			extendedBounds.Max = max
+		}
+
+		dateHistogramAgg.DateHistogram.ExtendedBounds = extendedBounds
+	}
+
+	builder.Aggregation(dhf.property, dateHistogramAgg)
 }
 
 func (dhf *DateHistogramFeature) handle(result *reveald.Result) (*reveald.Result, error) {
-	agg, ok := result.RawResult().Aggregations.DateHistogram(dhf.property)
+	agg, ok := result.RawAggregations()[dhf.property]
 	if !ok {
 		return result, nil
 	}
 
-	var buckets []*reveald.ResultBucket
-	for _, bucket := range agg.Buckets {
+	histogram, ok := agg.(types.DateHistogramAggregate)
+	if !ok {
+		return result, nil
+	}
+
+	buckets, ok := histogram.Buckets.([]types.DateHistogramBucket)
+	if !ok {
+		return result, nil
+	}
+
+	var resultBuckets []*reveald.ResultBucket
+	for _, bucket := range buckets {
 		if bucket.DocCount == 0 && !dhf.zerobucket {
 			continue
 		}
-		buckets = append(buckets, &reveald.ResultBucket{
-			Value: *bucket.KeyAsString,
-
+		resultBuckets = append(resultBuckets, &reveald.ResultBucket{
+			Value:    bucket.Key,
 			HitCount: bucket.DocCount,
 		})
 	}
 
-	result.Aggregations[dhf.property] = buckets
+	result.Aggregations[dhf.property] = resultBuckets
 	return result, nil
-}
-
-func IntervalEnd(t time.Time, interval string) time.Time {
-	switch interval {
-	case string(DateCalendarIntervalYearly):
-		return t.AddDate(1, 0, 0)
-	case string(DateCalendarIntervalMonthly):
-		return t.AddDate(0, 1, 0)
-	case string(DateCalendarIntervalDaily):
-		return t.AddDate(0, 0, 1)
-	case string(DateFixedIntervalDaily):
-		return t.AddDate(0, 0, 1)
-	case string(DateFixedIntervalHours):
-		return t.Add(time.Hour)
-	case string(DateFixedIntervalMinutes):
-		return t.Add(time.Minute)
-	case string(DateFixedIntervalSeconds):
-		return t.Add(time.Second)
-	case string(DateFixedIntervalMilliseconds):
-		return t.Add(time.Millisecond)
-	}
-
-	return t
-}
-
-func ParseTimeFrom(d string, interval string) (time.Time, error) {
-	switch interval {
-	case string(DateCalendarIntervalYearly):
-		return time.Parse("2006", d)
-	case string(DateCalendarIntervalMonthly):
-		return time.Parse("2006-01", d)
-	case string(DateCalendarIntervalDaily):
-		return time.Parse("2006-01-02", d)
-	case string(DateFixedIntervalDaily):
-		return time.Parse("2006-01-02", d)
-	case string(DateFixedIntervalHours):
-		return time.Parse("2006-01-02 15", d)
-	case string(DateFixedIntervalMinutes):
-		return time.Parse("2006-01-02 15:04", d)
-	case string(DateFixedIntervalSeconds):
-		return time.Parse("2006-01-02 15:04:05", d)
-	case string(DateFixedIntervalMilliseconds):
-		return time.Parse("2006-01-02 15:04:05.000", d)
-	}
-
-	return time.Time{}, errors.New("invalid date format")
 }
