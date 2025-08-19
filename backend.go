@@ -420,22 +420,17 @@ func sorts(sort []types.SortCombinations) []types.SortCombinations {
 }
 
 func (b *ElasticBackend) Execute(ctx context.Context, builder *QueryBuilder) (*Result, error) {
-	docvalueFields := make([]types.FieldAndFormat, 0, len(builder.docValueFields))
-	for _, field := range builder.docValueFields {
-		docvalueFields = append(docvalueFields, field)
-	}
-
 	res, err := b.client.Search().
 		Index(strings.Join(builder.Indices(), ",")).
 		Query(builder.RawQuery()).
 		Size(builder.Selection().pageSize).
 		From(builder.Selection().offset).
-		Sort(sorts(builder.Selection().sort)...).
+		Sort(builder.Selection().sort...).
 		Aggregations(builder.aggregations).
 		SourceExcludes_(builder.Selection().exclusions...).
 		SourceIncludes_(builder.Selection().inclusions...).
 		ScriptFields(builder.scriptFields).
-		DocvalueFields(docvalueFields...).
+		DocvalueFields(builder.docValueFields...).
 		RuntimeMappings(builder.runtimeFields).
 		Do(ctx)
 	if err != nil {
