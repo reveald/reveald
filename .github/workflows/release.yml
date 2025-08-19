@@ -1,0 +1,284 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - custom
+        default: patch
+      custom_version:
+        description: 'Custom version (only used when bump_type is "custom")'
+        required: false
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+      prerelease_suffix:
+        description: 'Pre-release suffix (e.g., beta, alpha, rc)'
+        required: false
+        type: string
+        default: ''
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+
+jobs:
+  determine-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      current_version: ${{ steps.version.outputs.current_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get Current Version
+        id: current
+        run: |
+          CURRENT_TAG=$(git tag -l "v*" | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | sort -V | tail -1 || echo "")
+          if [ -z "$CURRENT_TAG" ]; then
+            echo "current_version=No previous version" >> $GITHUB_OUTPUT
+            echo "current_tag=" >> $GITHUB_OUTPUT
+          else
+            echo "current_version=${CURRENT_TAG#v}" >> $GITHUB_OUTPUT
+            echo "current_tag=${CURRENT_TAG}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Calculate Next Version
+        id: version
+        run: |
+          # Store current version for output
+          echo "current_version=${{ steps.current.outputs.current_version }}" >> $GITHUB_OUTPUT
+          
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            # Manual trigger - calculate version based on input
+            if [ "${{ github.event.inputs.bump_type }}" == "custom" ]; then
+              # Use custom version
+              if [ -z "${{ github.event.inputs.custom_version }}" ]; then
+                echo "Error: Custom version is required when bump_type is 'custom'"
+                exit 1
+              fi
+              BASE_VERSION="${{ github.event.inputs.custom_version }}"
+            else
+              # Calculate version based on bump type
+              CURRENT_TAG="${{ steps.current.outputs.current_tag }}"
+              
+              if [ -z "$CURRENT_TAG" ]; then
+                # No previous tags, start with initial version
+                case "${{ github.event.inputs.bump_type }}" in
+                  major)
+                    BASE_VERSION="1.0.0"
+                    ;;
+                  minor)
+                    BASE_VERSION="0.1.0"
+                    ;;
+                  patch)
+                    BASE_VERSION="0.0.1"
+                    ;;
+                esac
+              else
+                # Extract version numbers and bump
+                VERSION=${CURRENT_TAG#v}
+                IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+                
+                case "${{ github.event.inputs.bump_type }}" in
+                  major)
+                    MAJOR=$((MAJOR + 1))
+                    MINOR=0
+                    PATCH=0
+                    ;;
+                  minor)
+                    MINOR=$((MINOR + 1))
+                    PATCH=0
+                    ;;
+                  patch)
+                    PATCH=$((PATCH + 1))
+                    ;;
+                esac
+                
+                BASE_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+              fi
+            fi
+            
+            # Add pre-release suffix if specified
+            if [ "${{ github.event.inputs.prerelease }}" == "true" ] && [ -n "${{ github.event.inputs.prerelease_suffix }}" ]; then
+              VERSION="${BASE_VERSION}-${{ github.event.inputs.prerelease_suffix }}"
+            else
+              VERSION="${BASE_VERSION}"
+            fi
+          else
+            # Tag push - extract version from tag
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          
+          # Display version information
+          echo "::notice title=Version Information::Current: ${{ steps.current.outputs.current_version }} → Next: ${VERSION}"
+
+      - name: Validate Version
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          # Validate version format
+          if ! echo "$VERSION" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[0-9]+)?)?$'; then
+            echo "Error: Invalid version format. Expected: X.Y.Z or X.Y.Z-suffix"
+            exit 1
+          fi
+          
+          # Check if version tag already exists
+          if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
+            echo "Error: Version v${VERSION} already exists!"
+            exit 1
+          fi
+          
+          echo "✅ Version v${VERSION} is valid and available"
+
+  test:
+    needs: determine-version
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.21', '1.22']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Build
+        run: go build -v ./...
+
+      - name: Test
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        if: matrix.go-version == '1.22'
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage
+          path: coverage.out
+
+  create-release-tag:
+    needs: [determine-version, test]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: Create and Push Release Tag
+        run: |
+          VERSION="${{ needs.determine-version.outputs.version }}"
+          echo "Creating release tag v${VERSION}"
+          
+          # Create annotated tag
+          git tag -a "v${VERSION}" -m "Release v${VERSION}"
+          
+          # Push the tag
+          git push origin "v${VERSION}"
+          
+          echo "::notice title=Release Tag Created::Successfully created and pushed tag v${VERSION}"
+
+  create-github-release:
+    needs: [determine-version, test, create-release-tag]
+    if: always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && needs.create-release-tag.result == 'success'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Release Notes
+        id: notes
+        run: |
+          VERSION="${{ needs.determine-version.outputs.version }}"
+          CURRENT="${{ needs.determine-version.outputs.current_version }}"
+          
+          # Create release notes file
+          echo "# Release v${VERSION}" > release_notes.md
+          echo "" >> release_notes.md
+          
+          if [ "$CURRENT" != "No previous version" ]; then
+            echo "**Previous version:** v${CURRENT}" >> release_notes.md
+            echo "" >> release_notes.md
+          fi
+          
+          echo "## What's Changed" >> release_notes.md
+          echo "" >> release_notes.md
+          
+          # Generate changelog using the script
+          if [ -f "./scripts/generate-changelog.sh" ]; then
+            if [ "$CURRENT" != "No previous version" ]; then
+              ./scripts/generate-changelog.sh "v${CURRENT}" "v${VERSION}" | tail -n +4 >> release_notes.md
+            else
+              echo "### Initial Release" >> release_notes.md
+              echo "This is the first release of Reveald." >> release_notes.md
+            fi
+          else
+            # Fallback to simple commit list
+            if [ "$CURRENT" != "No previous version" ]; then
+              PREV_TAG="v${CURRENT}"
+              echo "### Commits since ${PREV_TAG}" >> release_notes.md
+              git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%an)" >> release_notes.md
+            else
+              echo "### Initial Release" >> release_notes.md
+              echo "This is the first release of Reveald." >> release_notes.md
+            fi
+          fi
+          
+          echo "" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## Installation" >> release_notes.md
+          echo "" >> release_notes.md
+          echo '```bash' >> release_notes.md
+          echo "go get github.com/username/reveald@v${VERSION}" >> release_notes.md
+          echo '```' >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## Usage" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "See the [README](https://github.com/username/reveald#readme) for usage instructions." >> release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.determine-version.outputs.version }}
+          name: v${{ needs.determine-version.outputs.version }}
+          body_path: release_notes.md
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
