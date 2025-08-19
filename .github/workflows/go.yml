@@ -30,7 +30,9 @@ jobs:
       run: go build -v .
 
     - name: Test
-      run: go test -race -cover -v ./...
+      run: |
+        go env -w GOTOOLCHAIN=go1.25.0+auto
+        go test -race -cover -v ./...
 
     - name: Vet
       run: go vet ./...
