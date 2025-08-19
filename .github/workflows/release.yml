@@ -176,7 +176,9 @@ jobs:
         run: go build -v ./...
 
       - name: Test
-        run: go test -v -race -coverprofile=coverage.out ./...
+        run: |
+          go env -w GOTOOLCHAIN=go1.25.0+auto
+          go test -v -race -coverprofile=coverage.out ./...
 
       - name: Upload coverage
         if: matrix.go-version == '1.25'

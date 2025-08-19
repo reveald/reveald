@@ -16,7 +16,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v3
       with:
-        go-version: ^1.24
+        go-version: ^1.25
       id: go
 
     - name: Check out code into the Go module directory
@@ -41,4 +41,4 @@ jobs:
       uses: golangci/golangci-lint-action@v6
       with:
         version: v1.64.6
-        args: --timeout=5m
+        args: --timeout=10m
