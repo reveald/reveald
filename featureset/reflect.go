@@ -14,14 +14,12 @@ import (
 // These options control how the Reflect function generates features
 // for struct fields.
 type tagOptions struct {
-	ignore                bool                  // Skip this field entirely
-	noSort                bool                  // Don't generate sorting options
-	dynamic               bool                  // Create dynamic filter for this field
-	histogram             bool                  // Create histogram aggregation (numeric fields only)
-	histogramInterval     float64               // Histogram bucket interval
-	dateHistogram         bool                  // Create date histogram (time.Time fields only)
-	dateHistogramInterval DateHistogramInterval // Date histogram interval
-	aggSize               int                   // Aggregation size for dynamic filters
+	ignore            bool   // Skip this field entirely
+	noSort            bool   // Don't generate sorting options
+	dynamic           bool   // Create dynamic filter for this field
+	histogram         bool   // Create histogram aggregation (numeric or time fields)
+	histogramInterval string // Histogram bucket interval (numeric value or date interval like "day")
+	aggSize           int    // Aggregation size for dynamic filters
 }
 
 // parseTagOptions parses a reveald tag into structured options.
@@ -29,14 +27,13 @@ type tagOptions struct {
 // Supports formats like:
 //   - "ignore" - skip field entirely
 //   - "dynamic,no-sort" - multiple comma-separated options
-//   - "histogram,interval=100" - option with parameter
-//   - "date-histogram,interval=day" - date histogram with interval
+//   - "histogram,interval=100" - histogram with numeric interval
+//   - "histogram,interval=day" - histogram with date interval
 //   - "dynamic,agg-size=50" - custom aggregation size
 func parseTagOptions(tag string) tagOptions {
 	opts := tagOptions{
-		histogramInterval:     100, // default
-		dateHistogramInterval: Day, // default
-		aggSize:               100, // default
+		histogramInterval: "100", // default (works for both numeric and date histograms)
+		aggSize:           100,   // default
 	}
 
 	if tag == "" {
@@ -55,13 +52,7 @@ func parseTagOptions(tag string) tagOptions {
 
 			switch key {
 			case "interval":
-				if opts.histogram {
-					if interval, err := strconv.ParseFloat(value, 64); err == nil {
-						opts.histogramInterval = interval
-					}
-				} else if opts.dateHistogram {
-					opts.dateHistogramInterval = DateHistogramInterval(value)
-				}
+				opts.histogramInterval = value
 			case "agg-size":
 				if size, err := strconv.Atoi(value); err == nil {
 					opts.aggSize = size
@@ -78,8 +69,6 @@ func parseTagOptions(tag string) tagOptions {
 				opts.dynamic = true
 			case "histogram":
 				opts.histogram = true
-			case "date-histogram":
-				opts.dateHistogram = true
 			}
 		}
 	}
@@ -194,13 +183,16 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //
 // ## Aggregation Tags
 //
-//   - histogram: Create histogram aggregation for numeric/float fields
-//   - histogram,interval=N: Histogram with custom interval (default: 100)
-//   - date-histogram: Create date histogram for time.Time fields
-//   - date-histogram,interval=I: Date histogram with interval (default: day)
-//     Valid intervals: second, minute, hour, day, week, month, quarter, year
+//   - histogram: Create histogram aggregation (numeric fields or time.Time)
+//   - histogram,interval=N: Numeric histogram with custom interval (default: 100)
+//   - histogram,interval=I: Date histogram with time interval (default: day)
+//     Valid time intervals: second, minute, hour, day, week, month, quarter, year
 //   - agg-size=N: Set aggregation size for dynamic filters (default: 100)
 //     Controls the maximum number of buckets returned in aggregations
+//
+// The histogram tag automatically detects the field type:
+//   - For int/uint/float: Creates HistogramFeature with numeric interval
+//   - For time.Time: Creates DateHistogramFeature with date interval
 //
 // ## Combining Tags
 //
@@ -265,19 +257,19 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //	// - "Age" (automatic dynamic filter for int)
 //	// - Sorting options for all fields including "Address.City-asc", etc.
 //
-// Date histogram example:
+// Histogram example (type-aware):
 //
 //	type Event struct {
 //	    Name      string    `reveald:"dynamic"`
-//	    Timestamp time.Time `reveald:"date-histogram,interval=hour"`
-//	    Count     int       `reveald:"histogram,interval=10"`
+//	    Timestamp time.Time `reveald:"histogram,interval=hour"`  // Date histogram
+//	    Count     int       `reveald:"histogram,interval=10"`    // Numeric histogram
 //	}
 //
 //	features := featureset.Reflect(reflect.TypeOf(Event{}))
 //	// Creates:
 //	// - DynamicFilterFeature for Name
-//	// - DateHistogramFeature for Timestamp with hourly buckets
-//	// - HistogramFeature for Count with interval 10
+//	// - DateHistogramFeature for Timestamp with hourly buckets (auto-detected from time.Time)
+//	// - HistogramFeature for Count with interval 10 (auto-detected from int)
 //	// - SortingFeature for all fields
 //
 // Custom aggregation size example:
@@ -314,13 +306,14 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //   - DynamicFilterFeature: For filterable fields (strings with dynamic tag, numerics, time)
 //   - DynamicBooleanFilterFeature: For boolean fields
 //   - HistogramFeature: For numeric fields with histogram tag
-//   - DateHistogramFeature: For time.Time fields with date-histogram tag
+//   - DateHistogramFeature: For time.Time fields with histogram tag
 //   - SortingFeature: One feature with sort options for all non-ignored, non-no-sort fields
 //
 // # Notes
 //
 //   - String fields require the "dynamic" tag to create filters (unlike other types)
-//   - Histogram/date-histogram tags replace the default dynamic filter for that field
+//   - The histogram tag is type-aware: creates numeric or date histogram based on field type
+//   - Histogram tags replace the default dynamic filter for that field
 //   - time.Time fields are special-cased and not treated as regular structs
 //   - All fields (including nested) get sorting options unless "ignore" or "no-sort" is specified
 //   - Field paths use Go field names (e.g., "Details.Price")
@@ -351,7 +344,7 @@ func Reflect(t reflect.Type) []reveald.Feature {
 		// Unwrap pointer and slice types for basic type checking
 		fieldType := f.Type
 		isSlice := false
-		if fieldType.Kind() == reflect.Ptr {
+		if fieldType.Kind() == reflect.Pointer {
 			fieldType = fieldType.Elem()
 		}
 		if fieldType.Kind() == reflect.Slice {
@@ -359,19 +352,24 @@ func Reflect(t reflect.Type) []reveald.Feature {
 			fieldType = fieldType.Elem() // Get element type
 		}
 
-		// Handle histogram features for numeric types
+		// Handle histogram features (type-aware)
 		if opts.histogram {
 			switch fieldType.Kind() {
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 				reflect.Float32, reflect.Float64:
-				featureOpts = append(featureOpts, NewHistogramFeature(fieldPath, WithInterval(opts.histogramInterval)))
+				// Parse interval as float64 for numeric histograms
+				interval := 100.0
+				if val, err := strconv.ParseFloat(opts.histogramInterval, 64); err == nil {
+					interval = val
+				}
+				featureOpts = append(featureOpts, NewHistogramFeature(fieldPath, WithInterval(interval)))
 			}
-		}
 
-		// Handle date histogram features for time.Time
-		if opts.dateHistogram && (fieldType == reflect.TypeOf(time.Time{}) || f.Type == reflect.TypeOf(&time.Time{})) {
-			featureOpts = append(featureOpts, NewDateHistogramFeature(fieldPath, opts.dateHistogramInterval))
+			// For time.Time, create date histogram
+			if fieldType == reflect.TypeOf(time.Time{}) || f.Type == reflect.TypeOf(&time.Time{}) {
+				featureOpts = append(featureOpts, NewDateHistogramFeature(fieldPath, DateHistogramInterval(opts.histogramInterval)))
+			}
 		}
 
 		// Add default features for types (check unwrapped type)
@@ -385,16 +383,9 @@ func Reflect(t reflect.Type) []reveald.Feature {
 		case reflect.Bool:
 			featureOpts = append(featureOpts, NewDynamicBooleanFilterFeature(fieldPath))
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Float32, reflect.Float64, reflect.TypeOf(time.Time{}).Kind():
 			if !opts.histogram {
-				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
-			}
-		case reflect.Float32, reflect.Float64:
-			if !opts.histogram {
-				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
-			}
-		case reflect.TypeOf(time.Time{}).Kind():
-			if !opts.dateHistogram {
 				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
 			}
 		}
@@ -411,11 +402,7 @@ func Reflect(t reflect.Type) []reveald.Feature {
 			case reflect.String:
 				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-				if !opts.histogram {
-					featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
-				}
-			case reflect.Float32, reflect.Float64:
+				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
 				if !opts.histogram {
 					featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
 				}

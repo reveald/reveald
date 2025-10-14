@@ -333,8 +333,8 @@ func Test_ReflectHistogramFeature(t *testing.T) {
 
 func Test_ReflectDateHistogramFeature(t *testing.T) {
 	type TTarget struct {
-		Created time.Time `reveald:"date-histogram,interval=day"`
-		Updated time.Time `reveald:"date-histogram,interval=month"`
+		Created time.Time `reveald:"histogram,interval=day"`
+		Updated time.Time `reveald:"histogram,interval=month"`
 	}
 
 	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
@@ -350,7 +350,7 @@ func Test_ReflectDateHistogramFeature(t *testing.T) {
 		t.Fatalf("expected 2 date histogram features, got %d", len(dateHistogramFeatures))
 	}
 
-	// Verify that DynamicFilterFeature is NOT created for date-histogram fields
+	// Verify that DynamicFilterFeature is NOT created for histogram fields
 	dynamicFeatures := []*featureset.DynamicFilterFeature{}
 	for _, f := range features {
 		if df, ok := f.(*featureset.DynamicFilterFeature); ok {
@@ -359,7 +359,7 @@ func Test_ReflectDateHistogramFeature(t *testing.T) {
 	}
 
 	if len(dynamicFeatures) != 0 {
-		t.Fatalf("expected 0 dynamic filter features for date-histogram fields, got %d", len(dynamicFeatures))
+		t.Fatalf("expected 0 dynamic filter features for histogram fields, got %d", len(dynamicFeatures))
 	}
 }
 
@@ -367,7 +367,7 @@ func Test_ReflectCombinedTags(t *testing.T) {
 	type TTarget struct {
 		Name     string    `reveald:"dynamic,no-sort"`
 		Price    float64   `reveald:"histogram,interval=100"`
-		Created  time.Time `reveald:"date-histogram,interval=day"`
+		Created  time.Time `reveald:"histogram,interval=day"`
 		Category string    `reveald:"dynamic"`
 		Ignored  string    `reveald:"ignore"`
 	}
@@ -771,11 +771,11 @@ func Test_ReflectUnsignedIntegers(t *testing.T) {
 
 func Test_ReflectPointers(t *testing.T) {
 	type Optional struct {
-		Name   *string  `reveald:"dynamic"`
+		Name   *string    `reveald:"dynamic"`
 		Count  *int
-		Price  *float64 `reveald:"histogram,interval=10"`
+		Price  *float64   `reveald:"histogram,interval=10"`
 		Active *bool
-		When   *time.Time `reveald:"date-histogram,interval=day"`
+		When   *time.Time `reveald:"histogram,interval=day"`
 	}
 
 	features := featureset.Reflect(reflect.TypeOf(Optional{}))
