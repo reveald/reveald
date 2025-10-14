@@ -11,7 +11,7 @@ import (
 func Test_ReflectionFeature(t *testing.T) {
 
 	type TTarget struct {
-		Name     string `json:"name" reveald:"sortable,dynamic"`
+		Name     string `json:"name-overridden" reveald:"dynamic"`
 		Active   bool
 		Category string `reveald:"dynamic"`
 		Count    int
@@ -23,5 +23,16 @@ func Test_ReflectionFeature(t *testing.T) {
 	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
 	if len(features) != 7 {
 		t.Fatal("expected 7 features, got", len(features))
+	}
+
+	for _, f := range features {
+		switch f.(type) {
+		case *featureset.DynamicFilterFeature:
+			// pass
+		case *featureset.SortingFeature:
+			// pass
+		default:
+			t.Fatal("unexpected feature type", reflect.TypeOf(f))
+		}
 	}
 }

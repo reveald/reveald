@@ -19,6 +19,11 @@ func Reflect(t reflect.Type) []reveald.Feature {
 		if rtag != "ignore" {
 
 			fieldName := f.Name
+			jsonTag := f.Tag.Get("json")
+			if jsonTag != "" {
+				fieldName = strings.Split(jsonTag, ",")[0]
+			}
+
 			switch f.Type.Kind() {
 			case reflect.String:
 				fieldName += ".keyword"
