@@ -184,9 +184,19 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //
 // # JSON Tag Support
 //
-// The json struct tag is respected for field naming:
+// The json struct tag is respected for field naming at all nesting levels:
 //
 //	Price float64 `json:"product_price"` // Uses "product_price" in Elasticsearch
+//
+// For nested structs, json tags are applied at each level:
+//
+//	type Details struct {
+//	    Price float64 `json:"price_amount"`
+//	}
+//	type Product struct {
+//	    Details Details `json:"product_details"`
+//	}
+//	// Creates path: "product_details.price_amount" in Elasticsearch
 //
 // # Examples
 //
@@ -271,7 +281,9 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //   - Histogram/date-histogram tags replace the default dynamic filter for that field
 //   - time.Time fields are special-cased and not treated as regular structs
 //   - All fields (including nested) get sorting options unless "ignore" or "no-sort" is specified
-//   - Field paths use Go field names, but Elasticsearch queries use json tag names
+//   - Field paths use Go field names (e.g., "Details.Price")
+//   - Elasticsearch field names use json tags at all levels (e.g., "product_details.price_amount")
+//   - If no json tag is present, the Go field name is used as-is for Elasticsearch
 func Reflect(t reflect.Type) []reveald.Feature {
 	sortOpts := make([]SortingOption, 0)
 	featureOpts := make([]reveald.Feature, 0)

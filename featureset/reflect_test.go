@@ -651,3 +651,87 @@ func Test_ReflectAggSizeCombinations(t *testing.T) {
 		}
 	}
 }
+
+func Test_ReflectNestedStructJsonTags(t *testing.T) {
+	type Pricing struct {
+		Amount   float64 `json:"price_amount" reveald:"histogram,interval=10"`
+		Currency string  `json:"currency_code" reveald:"dynamic"`
+	}
+
+	type Details struct {
+		SKU     string  `json:"product_sku" reveald:"dynamic"`
+		Pricing Pricing `json:"pricing_info"`
+	}
+
+	type Product struct {
+		Name    string  `json:"product_name" reveald:"dynamic"`
+		Details Details `json:"product_details"`
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(Product{}))
+
+	// Verify sorting feature uses json tags at all nesting levels
+	sortFeature := findSortingFeature(features)
+	if sortFeature == nil {
+		t.Fatal("expected a sorting feature")
+	}
+
+	req := reveald.NewRequest()
+	builder := reveald.NewQueryBuilder(req, "test-index")
+
+	result, err := sortFeature.Process(builder, func(qb *reveald.QueryBuilder) (*reveald.Result, error) {
+		return &reveald.Result{
+			Aggregations: make(map[string][]*reveald.ResultBucket),
+		}, nil
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify top-level field uses json tag
+	foundTopLevel := false
+	for _, opt := range result.Sorting.Options {
+		if strings.Contains(opt.Name, "Name") {
+			foundTopLevel = true
+			if !strings.Contains(opt.Value, "product_name.keyword") {
+				t.Errorf("expected Name to use json tag 'product_name.keyword', got: %s", opt.Value)
+			}
+		}
+	}
+	if !foundTopLevel {
+		t.Error("expected sort option for Name field")
+	}
+
+	// Verify nested struct field uses json tags at all levels
+	// Field path: Details.SKU
+	// JSON path should be: product_details.product_sku.keyword
+	foundNested := false
+	for _, opt := range result.Sorting.Options {
+		if strings.Contains(opt.Name, "Details.SKU") {
+			foundNested = true
+			if opt.Value != "product_details.product_sku.keyword" {
+				t.Errorf("expected Details.SKU to use json path 'product_details.product_sku.keyword', got: %s", opt.Value)
+			}
+		}
+	}
+	if !foundNested {
+		t.Error("expected sort option for Details.SKU field")
+	}
+
+	// Verify deeply nested field uses json tags at all levels
+	// Field path: Details.Pricing.Currency
+	// JSON path should be: product_details.pricing_info.currency_code.keyword
+	foundDeeplyNested := false
+	for _, opt := range result.Sorting.Options {
+		if strings.Contains(opt.Name, "Details.Pricing.Currency") {
+			foundDeeplyNested = true
+			if opt.Value != "product_details.pricing_info.currency_code.keyword" {
+				t.Errorf("expected Details.Pricing.Currency to use json path 'product_details.pricing_info.currency_code.keyword', got: %s", opt.Value)
+			}
+		}
+	}
+	if !foundDeeplyNested {
+		t.Error("expected sort option for Details.Pricing.Currency field")
+	}
+}
