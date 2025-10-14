@@ -1,57 +1,53 @@
+version: "2"
 run:
-  go: '1.24'
-  timeout: 5m
-
+  go: "1.25"
 linters:
-  enable:
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-    - typecheck
-
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+        path: _test\.go
+      - linters:
+          - staticcheck
+        path: integration_test\.go
+        text: 'SA1019:'
+      - linters:
+          - staticcheck
+        path: featureset/date-range-histogram\.go
+        text: 'SA9003:'
+      - linters:
+          - staticcheck
+        path: featureset/dynamic-filter\.go
+        text: 'SA9003:'
+      - linters:
+          - staticcheck
+        path: featureset/sorting\.go
+        text: 'SA9003:'
+      - linters:
+          - unused
+        path: featureset/date-histogram\.go
+        text: field `query` is unused
+      - linters:
+          - unused
+        path: builder_test\.go
+        text: func `termsAggregationToMap` is unused
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 issues:
-  exclude-rules:
-    # Exclude errcheck in test files
-    - path: _test\.go
-      linters:
-        - errcheck
-    
-    # Exclude deprecation warnings in test files
-    - path: integration_test\.go
-      linters:
-        - staticcheck
-      text: "SA1019:"  # Exclude deprecation warnings
-    
-    # Exclude empty branch warnings
-    - path: featureset/date-range-histogram\.go
-      linters:
-        - staticcheck
-      text: "SA9003:"  # Empty branch
-    
-    - path: featureset/dynamic-filter\.go
-      linters:
-        - staticcheck
-      text: "SA9003:"  # Empty branch
-    
-    - path: featureset/sorting\.go
-      linters:
-        - staticcheck
-      text: "SA9003:"  # Empty branch
-    
-    # Exclude unused field warnings
-    - path: featureset/date-histogram\.go
-      linters:
-        - unused
-      text: "field `query` is unused"
-    
-    # Exclude unused function in test file
-    - path: builder_test\.go
-      linters:
-        - unused
-      text: "func `termsAggregationToMap` is unused"
-
   max-issues-per-linter: 0
-  max-same-issues: 0 
+  max-same-issues: 0
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
