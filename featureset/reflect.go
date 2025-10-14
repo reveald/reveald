@@ -125,7 +125,7 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 
 		// Check if this is a struct (but not time.Time)
 		fieldType := f.Type
-		if fieldType.Kind() == reflect.Ptr {
+		if fieldType.Kind() == reflect.Pointer {
 			fieldType = fieldType.Elem()
 		}
 
