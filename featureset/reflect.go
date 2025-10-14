@@ -104,10 +104,29 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 			fieldPath = prefix + "." + f.Name
 		}
 
+		// Parse json tag according to encoding/json rules
 		jsonName := f.Name
 		jsonTag := f.Tag.Get("json")
 		if jsonTag != "" {
-			jsonName = strings.Split(jsonTag, ",")[0]
+			// Split on comma to separate name from options
+			parts := strings.Split(jsonTag, ",")
+			name := parts[0]
+
+			// Handle special cases per encoding/json spec:
+			// - json:"-" means skip this field entirely
+			// - json:"-," means use "-" as the field name
+			if name == "-" && len(parts) == 1 {
+				// Skip this field (json:"-")
+				continue
+			}
+			if name == "-" && len(parts) > 1 {
+				// Use "-" as field name (json:"-,...")
+				jsonName = "-"
+			} else if name != "" {
+				// Use the specified name (json:"customName" or json:"customName,omitempty")
+				jsonName = name
+			}
+			// If name is empty (json:",omitempty"), keep the default field name
 		}
 
 		jsonPath := jsonName

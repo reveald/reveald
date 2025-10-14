@@ -904,3 +904,151 @@ func Test_ReflectCombinedNewTypes(t *testing.T) {
 		t.Errorf("expected 1 histogram feature, got %d", histogramCount)
 	}
 }
+
+func Test_ReflectJsonTagSkip(t *testing.T) {
+	type Data struct {
+		Title    string `json:"title" reveald:"dynamic"`
+		Internal string `json:"-" reveald:"dynamic"` // Should be skipped entirely
+		Regular  string `json:"regular" reveald:"dynamic"`
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(Data{}))
+
+	// Should only have 2 dynamic filters (Title and Regular), Internal should be skipped
+	dynamicFilterCount := 0
+	for _, f := range features {
+		if _, ok := f.(*featureset.DynamicFilterFeature); ok {
+			dynamicFilterCount++
+		}
+	}
+
+	if dynamicFilterCount != 2 {
+		t.Errorf("expected 2 dynamic filter features (Internal should be skipped), got %d", dynamicFilterCount)
+	}
+
+	// Verify sorting options don't include Internal field
+	sortFeature := features[len(features)-1].(*featureset.SortingFeature)
+	req := reveald.NewRequest()
+	builder := reveald.NewQueryBuilder(req, "test-index")
+
+	result, err := sortFeature.Process(builder, func(qb *reveald.QueryBuilder) (*reveald.Result, error) {
+		return &reveald.Result{
+			Aggregations: make(map[string][]*reveald.ResultBucket),
+		}, nil
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check that Internal field doesn't appear in sorting options
+	for _, opt := range result.Sorting.Options {
+		if strings.Contains(opt.Name, "Internal") {
+			t.Errorf("json:\"-\" field Internal should be completely skipped, but found in sorting: %s", opt.Name)
+		}
+	}
+}
+
+func Test_ReflectJsonTagDash(t *testing.T) {
+	type Data struct {
+		DashField string `json:"-," reveald:"dynamic"` // Should use "-" as field name
+		Normal    string `json:"normal" reveald:"dynamic"`
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(Data{}))
+
+	// Get the sorting feature to check field paths
+	sortFeature := features[len(features)-1].(*featureset.SortingFeature)
+	req := reveald.NewRequest()
+	builder := reveald.NewQueryBuilder(req, "test-index")
+
+	result, err := sortFeature.Process(builder, func(qb *reveald.QueryBuilder) (*reveald.Result, error) {
+		return &reveald.Result{
+			Aggregations: make(map[string][]*reveald.ResultBucket),
+		}, nil
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check that DashField uses "-" in Elasticsearch
+	foundDash := false
+	for _, opt := range result.Sorting.Options {
+		if strings.Contains(opt.Name, "DashField") {
+			// The Elasticsearch field path should contain "-.keyword"
+			if !strings.Contains(opt.Value, "-.keyword") {
+				t.Errorf("json:\"-,\" field should use '-' as name, got: %s", opt.Value)
+			}
+			foundDash = true
+		}
+	}
+
+	if !foundDash {
+		t.Error("DashField not found in sorting options")
+	}
+}
+
+func Test_ReflectJsonTagOmitEmpty(t *testing.T) {
+	type Data struct {
+		DefaultName string `json:",omitempty" reveald:"dynamic"` // Should keep "DefaultName"
+		CustomName  string `json:"custom,omitempty" reveald:"dynamic"`
+		NoOptions   string `reveald:"dynamic"` // No json tag at all
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(Data{}))
+
+	// Get the sorting feature to check field paths
+	sortFeature := features[len(features)-1].(*featureset.SortingFeature)
+	req := reveald.NewRequest()
+	builder := reveald.NewQueryBuilder(req, "test-index")
+
+	result, err := sortFeature.Process(builder, func(qb *reveald.QueryBuilder) (*reveald.Result, error) {
+		return &reveald.Result{
+			Aggregations: make(map[string][]*reveald.ResultBucket),
+		}, nil
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify field names
+	foundDefault := false
+	foundCustom := false
+	foundNoOptions := false
+
+	for _, opt := range result.Sorting.Options {
+		if strings.Contains(opt.Name, "DefaultName") {
+			// json:",omitempty" should keep the Go field name "DefaultName"
+			if !strings.Contains(opt.Value, "DefaultName.keyword") {
+				t.Errorf("json:\",omitempty\" should keep Go field name, got: %s", opt.Value)
+			}
+			foundDefault = true
+		}
+		if strings.Contains(opt.Name, "CustomName") {
+			// json:"custom,omitempty" should use "custom"
+			if !strings.Contains(opt.Value, "custom.keyword") {
+				t.Errorf("json:\"custom,omitempty\" should use 'custom' as name, got: %s", opt.Value)
+			}
+			foundCustom = true
+		}
+		if strings.Contains(opt.Name, "NoOptions") {
+			// No json tag should keep the Go field name
+			if !strings.Contains(opt.Value, "NoOptions.keyword") {
+				t.Errorf("no json tag should keep Go field name, got: %s", opt.Value)
+			}
+			foundNoOptions = true
+		}
+	}
+
+	if !foundDefault {
+		t.Error("DefaultName field not found in sorting options")
+	}
+	if !foundCustom {
+		t.Error("CustomName field not found in sorting options")
+	}
+	if !foundNoOptions {
+		t.Error("NoOptions field not found in sorting options")
+	}
+}
