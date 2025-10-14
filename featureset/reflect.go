@@ -9,19 +9,27 @@ import (
 	"github.com/reveald/reveald"
 )
 
-// tagOptions represents parsed options from a reveald struct tag
+// tagOptions represents parsed options from a reveald struct tag.
+//
+// These options control how the Reflect function generates features
+// for struct fields.
 type tagOptions struct {
-	ignore           bool
-	noSort           bool
-	dynamic          bool
-	histogram        bool
-	histogramInterval float64
-	dateHistogram    bool
-	dateHistogramInterval DateHistogramInterval
+	ignore                bool                  // Skip this field entirely
+	noSort                bool                  // Don't generate sorting options
+	dynamic               bool                  // Create dynamic filter for this field
+	histogram             bool                  // Create histogram aggregation (numeric fields only)
+	histogramInterval     float64               // Histogram bucket interval
+	dateHistogram         bool                  // Create date histogram (time.Time fields only)
+	dateHistogramInterval DateHistogramInterval // Date histogram interval
 }
 
-// parseTagOptions parses a reveald tag into structured options
-// Supports formats like: "ignore", "dynamic,no-sort", "histogram,interval=100", "date-histogram,interval=day"
+// parseTagOptions parses a reveald tag into structured options.
+//
+// Supports formats like:
+//   - "ignore" - skip field entirely
+//   - "dynamic,no-sort" - multiple comma-separated options
+//   - "histogram,interval=100" - option with parameter
+//   - "date-histogram,interval=day" - date histogram with interval
 func parseTagOptions(tag string) tagOptions {
 	opts := tagOptions{
 		histogramInterval: 100, // default
@@ -72,12 +80,184 @@ func parseTagOptions(tag string) tagOptions {
 	return opts
 }
 
-func Reflect(t reflect.Type) []reveald.Feature {
+// fieldInfo holds information about a field including its path
+type fieldInfo struct {
+	field     reflect.StructField
+	fieldPath string // e.g., "Details.Price"
+	jsonPath  string // e.g., "details.price.keyword"
+}
 
+// collectFields recursively collects all fields including nested struct fields
+func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo {
+	var fields []fieldInfo
+
+	for _, f := range reflect.VisibleFields(t) {
+		fieldPath := f.Name
+		if prefix != "" {
+			fieldPath = prefix + "." + f.Name
+		}
+
+		jsonName := f.Name
+		jsonTag := f.Tag.Get("json")
+		if jsonTag != "" {
+			jsonName = strings.Split(jsonTag, ",")[0]
+		}
+
+		jsonPath := jsonName
+		if jsonPrefix != "" {
+			jsonPath = jsonPrefix + "." + jsonName
+		}
+
+		// Check if this is a struct (but not time.Time)
+		fieldType := f.Type
+		if fieldType.Kind() == reflect.Ptr {
+			fieldType = fieldType.Elem()
+		}
+
+		if fieldType.Kind() == reflect.Struct && fieldType != reflect.TypeOf(time.Time{}) {
+			// Recursively process nested struct
+			nestedFields := collectFields(fieldType, fieldPath, jsonPath)
+			fields = append(fields, nestedFields...)
+		} else {
+			// Regular field
+			fields = append(fields, fieldInfo{
+				field:     f,
+				fieldPath: fieldPath,
+				jsonPath:  jsonPath,
+			})
+		}
+	}
+
+	return fields
+}
+
+// Reflect automatically generates Elasticsearch features from a struct type using reflection.
+//
+// It analyzes struct fields and their tags to create appropriate features for filtering,
+// aggregation, and sorting. Nested structs are processed recursively, with field paths
+// constructed using dot notation (e.g., "Details.Price").
+//
+// # Supported Field Types
+//
+// The following Go types are automatically processed:
+//
+//   - string: Creates dynamic filter features (requires reveald:"dynamic" tag)
+//   - bool: Creates DynamicBooleanFilterFeature automatically
+//   - int, int8, int16, int32, int64: Creates DynamicFilterFeature automatically
+//   - float32, float64: Creates DynamicFilterFeature automatically
+//   - time.Time: Creates DynamicFilterFeature automatically
+//   - struct: Recursively processes nested fields with dotted paths
+//   - *struct: Processes nested struct through pointer
+//
+// # Struct Tags
+//
+// The reveald struct tag controls feature generation with the following options:
+//
+// ## Basic Tags
+//
+//   - ignore: Skip this field entirely (no features generated)
+//   - dynamic: Create dynamic filter for string fields
+//   - no-sort: Don't create sorting options for this field
+//
+// ## Aggregation Tags
+//
+//   - histogram: Create histogram aggregation for numeric/float fields
+//   - histogram,interval=N: Histogram with custom interval (default: 100)
+//   - date-histogram: Create date histogram for time.Time fields
+//   - date-histogram,interval=I: Date histogram with interval (default: day)
+//     Valid intervals: second, minute, hour, day, week, month, quarter, year
+//
+// ## Combining Tags
+//
+// Multiple options can be combined with commas:
+//
+//	Name string `reveald:"dynamic,no-sort"` // Dynamic filter but no sorting
+//
+// # JSON Tag Support
+//
+// The json struct tag is respected for field naming:
+//
+//	Price float64 `json:"product_price"` // Uses "product_price" in Elasticsearch
+//
+// # Examples
+//
+// Basic usage with flat struct:
+//
+//	type Product struct {
+//	    Name     string  `reveald:"dynamic"`
+//	    Price    float64 `reveald:"histogram,interval=50"`
+//	    Active   bool
+//	    Category string  `reveald:"dynamic"`
+//	    Internal string  `reveald:"ignore"`
+//	}
+//
+//	features := featureset.Reflect(reflect.TypeOf(Product{}))
+//	// Creates:
+//	// - DynamicFilterFeature for Name (requires dynamic tag for strings)
+//	// - HistogramFeature for Price with interval 50
+//	// - DynamicBooleanFilterFeature for Active (automatic for bool)
+//	// - DynamicFilterFeature for Category
+//	// - SortingFeature with options for all non-ignored fields
+//	// - Internal field is completely skipped
+//
+// Nested struct example:
+//
+//	type Address struct {
+//	    City    string `reveald:"dynamic"`
+//	    ZipCode string `reveald:"dynamic"`
+//	}
+//
+//	type Person struct {
+//	    Name    string
+//	    Address Address  // Nested struct
+//	    Age     int
+//	}
+//
+//	features := featureset.Reflect(reflect.TypeOf(Person{}))
+//	// Creates features with paths:
+//	// - "Address.City" (dynamic filter)
+//	// - "Address.ZipCode" (dynamic filter)
+//	// - "Age" (automatic dynamic filter for int)
+//	// - Sorting options for all fields including "Address.City-asc", etc.
+//
+// Date histogram example:
+//
+//	type Event struct {
+//	    Name      string    `reveald:"dynamic"`
+//	    Timestamp time.Time `reveald:"date-histogram,interval=hour"`
+//	    Count     int       `reveald:"histogram,interval=10"`
+//	}
+//
+//	features := featureset.Reflect(reflect.TypeOf(Event{}))
+//	// Creates:
+//	// - DynamicFilterFeature for Name
+//	// - DateHistogramFeature for Timestamp with hourly buckets
+//	// - HistogramFeature for Count with interval 10
+//	// - SortingFeature for all fields
+//
+// # Feature Types Generated
+//
+//   - DynamicFilterFeature: For filterable fields (strings with dynamic tag, numerics, time)
+//   - DynamicBooleanFilterFeature: For boolean fields
+//   - HistogramFeature: For numeric fields with histogram tag
+//   - DateHistogramFeature: For time.Time fields with date-histogram tag
+//   - SortingFeature: One feature with sort options for all non-ignored, non-no-sort fields
+//
+// # Notes
+//
+//   - String fields require the "dynamic" tag to create filters (unlike other types)
+//   - Histogram/date-histogram tags replace the default dynamic filter for that field
+//   - time.Time fields are special-cased and not treated as regular structs
+//   - All fields (including nested) get sorting options unless "ignore" or "no-sort" is specified
+//   - Field paths use Go field names, but Elasticsearch queries use json tag names
+func Reflect(t reflect.Type) []reveald.Feature {
 	sortOpts := make([]SortingOption, 0)
 	featureOpts := make([]reveald.Feature, 0)
 
-	for _, f := range reflect.VisibleFields(t) {
+	fields := collectFields(t, "", "")
+
+	for _, fieldInfo := range fields {
+		f := fieldInfo.field
 		rtag := f.Tag.Get("reveald")
 		opts := parseTagOptions(rtag)
 
@@ -85,66 +265,62 @@ func Reflect(t reflect.Type) []reveald.Feature {
 			continue
 		}
 
-		fieldName := f.Name
-		jsonTag := f.Tag.Get("json")
-		if jsonTag != "" {
-			fieldName = strings.Split(jsonTag, ",")[0]
-		}
+		fieldPath := fieldInfo.fieldPath
+		jsonPath := fieldInfo.jsonPath
 
 		// Handle histogram features for numeric types
 		if opts.histogram {
 			switch f.Type.Kind() {
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 				reflect.Float32, reflect.Float64:
-				featureOpts = append(featureOpts, NewHistogramFeature(f.Name, WithInterval(opts.histogramInterval)))
+				featureOpts = append(featureOpts, NewHistogramFeature(fieldPath, WithInterval(opts.histogramInterval)))
 			}
 		}
 
 		// Handle date histogram features for time.Time
 		if opts.dateHistogram && f.Type == reflect.TypeOf(time.Time{}) {
-			featureOpts = append(featureOpts, NewDateHistogramFeature(f.Name, opts.dateHistogramInterval))
+			featureOpts = append(featureOpts, NewDateHistogramFeature(fieldPath, opts.dateHistogramInterval))
 		}
 
 		// Add default features for types
 		switch f.Type.Kind() {
 		case reflect.String:
-			fieldName += ".keyword"
+			jsonPath += ".keyword"
 
 		case reflect.Bool:
-			featureOpts = append(featureOpts, NewDynamicBooleanFilterFeature(f.Name))
+			featureOpts = append(featureOpts, NewDynamicBooleanFilterFeature(fieldPath))
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			if !opts.histogram {
-				featureOpts = append(featureOpts, NewDynamicFilterFeature(f.Name, WithAggregationSize(100)))
+				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(100)))
 			}
 		case reflect.Float32, reflect.Float64:
 			if !opts.histogram {
-				featureOpts = append(featureOpts, NewDynamicFilterFeature(f.Name, WithAggregationSize(100)))
+				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(100)))
 			}
 		case reflect.TypeOf(time.Time{}).Kind():
 			if !opts.dateHistogram {
-				featureOpts = append(featureOpts, NewDynamicFilterFeature(f.Name, WithAggregationSize(100)))
+				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(100)))
 			}
 		}
 
 		// Add sorting options
 		if !opts.noSort {
-			sortOpts = append(sortOpts, WithSortOption(f.Name+"-desc", fieldName, false))
-			sortOpts = append(sortOpts, WithSortOption(f.Name+"-asc", fieldName, true))
+			sortOpts = append(sortOpts, WithSortOption(fieldPath+"-desc", jsonPath, false))
+			sortOpts = append(sortOpts, WithSortOption(fieldPath+"-asc", jsonPath, true))
 		}
 
 		// Handle dynamic tag
 		if opts.dynamic {
 			switch f.Type.Kind() {
 			case reflect.String:
-				fieldName += ".keyword"
-				featureOpts = append(featureOpts, NewDynamicFilterFeature(f.Name, WithAggregationSize(100)))
+				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(100)))
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 				if !opts.histogram {
-					featureOpts = append(featureOpts, NewDynamicFilterFeature(f.Name, WithAggregationSize(100)))
+					featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(100)))
 				}
 			case reflect.Float32, reflect.Float64:
 				if !opts.histogram {
-					featureOpts = append(featureOpts, NewDynamicFilterFeature(f.Name, WithAggregationSize(100)))
+					featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(100)))
 				}
 			}
 		}

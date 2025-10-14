@@ -437,3 +437,143 @@ func Test_ReflectCombinedTags(t *testing.T) {
 	}
 }
 
+func Test_ReflectNestedStruct(t *testing.T) {
+	type Details struct {
+		Price    float64 `reveald:"histogram,interval=50"`
+		Currency string  `reveald:"dynamic"`
+	}
+
+	type Product struct {
+		Name    string
+		Details Details
+		Active  bool
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(Product{}))
+
+	// Count feature types
+	histogramCount := 0
+	dynamicFilterCount := 0
+	boolFilterCount := 0
+
+	for _, f := range features {
+		switch f.(type) {
+		case *featureset.HistogramFeature:
+			histogramCount++
+		case *featureset.DynamicFilterFeature:
+			dynamicFilterCount++
+		case *featureset.DynamicBooleanFilterFeature:
+			boolFilterCount++
+		}
+	}
+
+	// Details.Price should create histogram
+	if histogramCount != 1 {
+		t.Errorf("expected 1 histogram feature for Details.Price, got %d", histogramCount)
+	}
+
+	// Details.Currency should create dynamic filter
+	if dynamicFilterCount != 1 {
+		t.Errorf("expected 1 dynamic filter for Details.Currency, got %d", dynamicFilterCount)
+	}
+
+	// Active should create boolean filter
+	if boolFilterCount != 1 {
+		t.Errorf("expected 1 boolean filter for Active, got %d", boolFilterCount)
+	}
+}
+
+func Test_ReflectDeeplyNestedStruct(t *testing.T) {
+	type Address struct {
+		City    string `json:"city"`
+		ZipCode string `reveald:"dynamic"`
+	}
+
+	type Contact struct {
+		Email   string
+		Address Address
+	}
+
+	type Person struct {
+		Name    string
+		Contact Contact
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(Person{}))
+
+	dynamicFilterCount := 0
+	for _, f := range features {
+		if _, ok := f.(*featureset.DynamicFilterFeature); ok {
+			dynamicFilterCount++
+		}
+	}
+
+	// Contact.Address.ZipCode should have dynamic filter
+	if dynamicFilterCount != 1 {
+		t.Errorf("expected 1 dynamic filter for nested ZipCode, got %d", dynamicFilterCount)
+	}
+
+	// Verify sorting feature has nested field paths
+	sortFeature := findSortingFeature(features)
+	if sortFeature == nil {
+		t.Fatal("expected a sorting feature")
+	}
+
+	req := reveald.NewRequest()
+	builder := reveald.NewQueryBuilder(req, "test-index")
+
+	result, err := sortFeature.Process(builder, func(qb *reveald.QueryBuilder) (*reveald.Result, error) {
+		return &reveald.Result{
+			Aggregations: make(map[string][]*reveald.ResultBucket),
+		}, nil
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check for nested field sort options
+	hasContactAddressCity := false
+	for _, opt := range result.Sorting.Options {
+		if strings.Contains(opt.Name, "Contact.Address.City") {
+			hasContactAddressCity = true
+			// Verify json path is correct
+			if !strings.Contains(opt.Value, "city.keyword") {
+				t.Errorf("expected Contact.Address.City to use json path with 'city.keyword', got: %s", opt.Value)
+			}
+		}
+	}
+
+	if !hasContactAddressCity {
+		t.Error("expected sort options for Contact.Address.City")
+	}
+}
+
+func Test_ReflectNestedStructWithPointer(t *testing.T) {
+	type Metadata struct {
+		Version int
+		Tags    string `reveald:"dynamic"`
+	}
+
+	type Document struct {
+		Title    string
+		Metadata *Metadata // Pointer to nested struct
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(Document{}))
+
+	dynamicFilterCount := 0
+
+	for _, f := range features {
+		switch f.(type) {
+		case *featureset.DynamicFilterFeature:
+			dynamicFilterCount++
+		}
+	}
+
+	// Should process nested struct even through pointer
+	// Metadata.Tags should have dynamic filter (1) + Metadata.Version automatic (1)
+	if dynamicFilterCount != 2 {
+		t.Errorf("expected 2 dynamic filters for nested fields through pointer, got %d", dynamicFilterCount)
+	}
+}
