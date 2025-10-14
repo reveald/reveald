@@ -103,6 +103,48 @@ func Test_ReflectIntegerFeatures(t *testing.T) {
 	}
 }
 
+func Test_ReflectFloatFeatures(t *testing.T) {
+	type TTarget struct {
+		Price  float64
+		Rating float32
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+
+	dynamicFeatures := []*featureset.DynamicFilterFeature{}
+	for _, f := range features {
+		if df, ok := f.(*featureset.DynamicFilterFeature); ok {
+			dynamicFeatures = append(dynamicFeatures, df)
+		}
+	}
+
+	if len(dynamicFeatures) != 2 {
+		t.Fatalf("expected 2 dynamic filter features for floats, got %d", len(dynamicFeatures))
+	}
+}
+
+func Test_ReflectDynamicFloatFeatures(t *testing.T) {
+	type TTarget struct {
+		Price  float64 `reveald:"dynamic"`
+		Rating float32 `reveald:"dynamic"`
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+
+	dynamicFeatures := []*featureset.DynamicFilterFeature{}
+	for _, f := range features {
+		if df, ok := f.(*featureset.DynamicFilterFeature); ok {
+			dynamicFeatures = append(dynamicFeatures, df)
+		}
+	}
+
+	// Each float field gets a feature automatically (2), and the dynamic tag adds another (2)
+	// So we get 4 dynamic filter features (this is redundant but consistent with int behavior)
+	if len(dynamicFeatures) != 4 {
+		t.Fatalf("expected 4 dynamic filter features for dynamic floats, got %d", len(dynamicFeatures))
+	}
+}
+
 func Test_ReflectTimeFeatures(t *testing.T) {
 	type TTarget struct {
 		Created time.Time
@@ -157,10 +199,33 @@ func Test_ReflectNoSortTag(t *testing.T) {
 
 	// Name should have sorting options (2: asc and desc)
 	// Updated should not have sorting options
-	// We need to test this through the Process method since options aren't directly exposed
-	// For now, we just verify the feature was created
-	if sortFeature == nil {
-		t.Fatal("expected a sorting feature to be created")
+	// Total should be 2 sort options
+	req := reveald.NewRequest()
+	builder := reveald.NewQueryBuilder(req, "test-index")
+
+	result, err := sortFeature.Process(builder, func(qb *reveald.QueryBuilder) (*reveald.Result, error) {
+		return &reveald.Result{
+			Aggregations: make(map[string][]*reveald.ResultBucket),
+		}, nil
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Sorting == nil {
+		t.Fatal("expected sorting information in result")
+	}
+
+	if len(result.Sorting.Options) != 2 {
+		t.Fatalf("expected 2 sort options (Name-asc, Name-desc), got %d", len(result.Sorting.Options))
+	}
+
+	// Verify that Updated field sorting options are not present
+	for _, opt := range result.Sorting.Options {
+		if opt.Name == "Updated-asc" || opt.Name == "Updated-desc" {
+			t.Errorf("unexpected sort option for Updated field: %s", opt.Name)
+		}
 	}
 }
 

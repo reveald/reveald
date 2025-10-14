@@ -32,6 +32,8 @@ func Reflect(t reflect.Type) []reveald.Feature {
 				featureOpts = append(featureOpts, NewDynamicBooleanFilterFeature(f.Name))
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 				featureOpts = append(featureOpts, NewDynamicFilterFeature(f.Name, WithAggregationSize(100)))
+			case reflect.Float32, reflect.Float64:
+				featureOpts = append(featureOpts, NewDynamicFilterFeature(f.Name, WithAggregationSize(100)))
 			case reflect.TypeOf(time.Time{}).Kind():
 				featureOpts = append(featureOpts, NewDynamicFilterFeature(f.Name, WithAggregationSize(100)))
 			}
@@ -47,6 +49,8 @@ func Reflect(t reflect.Type) []reveald.Feature {
 					fieldName += ".keyword"
 					featureOpts = append(featureOpts, NewDynamicFilterFeature(f.Name, WithAggregationSize(100)))
 				case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+					featureOpts = append(featureOpts, NewDynamicFilterFeature(f.Name, WithAggregationSize(100)))
+				case reflect.Float32, reflect.Float64:
 					featureOpts = append(featureOpts, NewDynamicFilterFeature(f.Name, WithAggregationSize(100)))
 				}
 			}
