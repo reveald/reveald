@@ -54,7 +54,6 @@ type DateHistogramFeature struct {
 	defaultLowerThreshold   *time.Time
 	timezone                string
 	calendarIntervalInstead bool
-	query                   []string
 	zerobucket              bool
 }
 

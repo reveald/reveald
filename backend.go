@@ -10,7 +10,6 @@ import (
 
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
-	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 )
 
 // ElasticBackend defines an Elasticsearch backend for Reveald.
@@ -318,49 +317,6 @@ func mapSearchResult(res search.Response, req *QueryBuilder) (*Result, error) {
 	}, nil
 }
 
-// Helper function to extract buckets from aggregation results
-func extractBuckets(agg any) []*ResultBucket {
-	aggMap, ok := agg.(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	buckets, found := aggMap["buckets"].([]any)
-	if !found {
-		return nil
-	}
-
-	var resultBuckets []*ResultBucket
-	for _, bucket := range buckets {
-		bucketMap, ok := bucket.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		key := bucketMap["key"]
-		docCount, _ := bucketMap["doc_count"].(float64)
-
-		rb := &ResultBucket{
-			Value:            key,
-			HitCount:         int64(docCount),
-			SubResultBuckets: make(map[string][]*ResultBucket),
-		}
-
-		// Extract sub-aggregations
-		for k, v := range bucketMap {
-			if k != "key" && k != "doc_count" && k != "key_as_string" {
-				if subBuckets := extractBuckets(v); len(subBuckets) > 0 {
-					rb.SubResultBuckets[k] = subBuckets
-				}
-			}
-		}
-
-		resultBuckets = append(resultBuckets, rb)
-	}
-
-	return resultBuckets
-}
-
 // Execute runs a query against Elasticsearch and returns the results.
 //
 // It takes a context for cancellation and a QueryBuilder that defines the query to execute.
@@ -385,39 +341,6 @@ func extractBuckets(agg any) []*ResultBucket {
 //	for _, hit := range result.Hits {
 //	    fmt.Printf("Document: %v\n", hit)
 //	}
-
-type runtimeFieldsCaster struct {
-	runtimeFields map[string]types.RuntimeField
-}
-
-func (r *runtimeFieldsCaster) RuntimeFieldsCaster() *types.RuntimeFields {
-	f := types.RuntimeFields(r.runtimeFields)
-	return &f
-}
-
-type fieldAndFormatCaster struct {
-	fieldAndFormat types.FieldAndFormat
-}
-
-func (f *fieldAndFormatCaster) FieldAndFormatCaster() *types.FieldAndFormat {
-	return &f.fieldAndFormat
-}
-
-type sortCaster struct {
-	sort types.SortCombinations
-}
-
-func (s *sortCaster) SortCombinationsCaster() *types.SortCombinations {
-	return &s.sort
-}
-
-func sorts(sort []types.SortCombinations) []types.SortCombinations {
-	sorts := make([]types.SortCombinations, 0, len(sort))
-	for _, s := range sort {
-		sorts = append(sorts, &sortCaster{sort: s})
-	}
-	return sorts
-}
 
 func (b *ElasticBackend) Execute(ctx context.Context, builder *QueryBuilder) (*Result, error) {
 	res, err := b.client.Search().
