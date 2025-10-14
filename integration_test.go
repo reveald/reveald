@@ -49,14 +49,6 @@ func setupElasticsearch(t *testing.T) (*elasticsearch.ElasticsearchContainer, st
 	return elasticContainer, httpURL
 }
 
-type mappingCaster struct {
-	types.TypeMapping
-}
-
-func (m *mappingCaster) TypeMappingCaster() *types.TypeMapping {
-	return &m.TypeMapping
-}
-
 // createTestIndex creates a test index with sample data
 func createTestIndex(t *testing.T, backend *ElasticBackend) {
 	ctx := context.Background()

@@ -17,11 +17,15 @@ func main() {
 	}
 
 	e := reveald.NewEndpoint(b, reveald.WithIndices("the-idx"))
-	e.Register(
+	err = e.Register(
 		featureset.NewStaticFilterFeature(featureset.WithRequiredProperty("maybe_field")),
 		featureset.NewStaticFilterFeature(featureset.WithRequiredValue("status.keyword", "Active")),
 		featureset.NewDynamicFilterFeature("text_field"),
 		featureset.NewHistogramFeature("range_field", featureset.WithInterval(1000)))
+
+	if err != nil {
+		panic(err)
+	}
 
 	req := reveald.NewRequest(
 		reveald.NewParameter("text_field", "Third"))
