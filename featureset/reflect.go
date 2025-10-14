@@ -151,10 +151,17 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //   - string: Creates dynamic filter features (requires reveald:"dynamic" tag)
 //   - bool: Creates DynamicBooleanFilterFeature automatically
 //   - int, int8, int16, int32, int64: Creates DynamicFilterFeature automatically
+//   - uint, uint8, uint16, uint32, uint64: Creates DynamicFilterFeature automatically
 //   - float32, float64: Creates DynamicFilterFeature automatically
 //   - time.Time: Creates DynamicFilterFeature automatically
 //   - struct: Recursively processes nested fields with dotted paths
-//   - *struct: Processes nested struct through pointer
+//   - *T: Pointers to basic types are unwrapped and treated as their base type
+//   - []T: Slices of basic types create features for the element type
+//
+// Pointer and slice support details:
+//   - *string, *int, *bool, *float64, *time.Time: Treated as optional fields
+//   - []string, []int, []float64: Multi-valued fields (Elasticsearch handles arrays natively)
+//   - Slices of strings do NOT get .keyword suffix (arrays work directly in ES)
 //
 // # Struct Tags
 //
@@ -267,6 +274,22 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //	// Creates DynamicFilterFeatures with custom aggregation sizes
 //	// Useful when fields have different cardinality needs
 //
+// Pointer and slice example:
+//
+//	type Article struct {
+//	    Title      string     `reveald:"dynamic"`
+//	    ViewCount  *uint64    // Optional field (nil = not viewed)
+//	    Tags       []string   `reveald:"dynamic"`  // Multi-valued field
+//	    Categories []string   `reveald:"dynamic,agg-size=50"`
+//	    Author     *string    `reveald:"dynamic"`  // Optional author
+//	    Ratings    []float64  // Array of ratings
+//	}
+//
+//	features := featureset.Reflect(reflect.TypeOf(Article{}))
+//	// Pointers are treated as optional versions of their base types
+//	// Slices create aggregations over array elements
+//	// []string fields work without .keyword suffix
+//
 // # Feature Types Generated
 //
 //   - DynamicFilterFeature: For filterable fields (strings with dynamic tag, numerics, time)
@@ -284,6 +307,10 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //   - Field paths use Go field names (e.g., "Details.Price")
 //   - Elasticsearch field names use json tags at all levels (e.g., "product_details.price_amount")
 //   - If no json tag is present, the Go field name is used as-is for Elasticsearch
+//   - Unsigned integers (uint, uint32, etc.) are treated identically to signed integers
+//   - Pointers (*string, *int, etc.) are unwrapped automatically - useful for optional fields
+//   - Slices ([]string, []int) are treated as multi-valued fields - no .keyword suffix for []string
+//   - Nil pointer values are handled by Elasticsearch as missing fields
 func Reflect(t reflect.Type) []reveald.Feature {
 	sortOpts := make([]SortingOption, 0)
 	featureOpts := make([]reveald.Feature, 0)
@@ -302,28 +329,44 @@ func Reflect(t reflect.Type) []reveald.Feature {
 		fieldPath := fieldInfo.fieldPath
 		jsonPath := fieldInfo.jsonPath
 
+		// Unwrap pointer and slice types for basic type checking
+		fieldType := f.Type
+		isSlice := false
+		if fieldType.Kind() == reflect.Ptr {
+			fieldType = fieldType.Elem()
+		}
+		if fieldType.Kind() == reflect.Slice {
+			isSlice = true
+			fieldType = fieldType.Elem() // Get element type
+		}
+
 		// Handle histogram features for numeric types
 		if opts.histogram {
-			switch f.Type.Kind() {
+			switch fieldType.Kind() {
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 				reflect.Float32, reflect.Float64:
 				featureOpts = append(featureOpts, NewHistogramFeature(fieldPath, WithInterval(opts.histogramInterval)))
 			}
 		}
 
 		// Handle date histogram features for time.Time
-		if opts.dateHistogram && f.Type == reflect.TypeOf(time.Time{}) {
+		if opts.dateHistogram && (fieldType == reflect.TypeOf(time.Time{}) || f.Type == reflect.TypeOf(&time.Time{})) {
 			featureOpts = append(featureOpts, NewDateHistogramFeature(fieldPath, opts.dateHistogramInterval))
 		}
 
-		// Add default features for types
-		switch f.Type.Kind() {
+		// Add default features for types (check unwrapped type)
+		switch fieldType.Kind() {
 		case reflect.String:
-			jsonPath += ".keyword"
+			// For slices of strings, don't add .keyword as Elasticsearch handles arrays natively
+			if !isSlice {
+				jsonPath += ".keyword"
+			}
 
 		case reflect.Bool:
 			featureOpts = append(featureOpts, NewDynamicBooleanFilterFeature(fieldPath))
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 			if !opts.histogram {
 				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
 			}
@@ -343,12 +386,13 @@ func Reflect(t reflect.Type) []reveald.Feature {
 			sortOpts = append(sortOpts, WithSortOption(fieldPath+"-asc", jsonPath, true))
 		}
 
-		// Handle dynamic tag
+		// Handle dynamic tag (use unwrapped type)
 		if opts.dynamic {
-			switch f.Type.Kind() {
+			switch fieldType.Kind() {
 			case reflect.String:
 				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 				if !opts.histogram {
 					featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
 				}

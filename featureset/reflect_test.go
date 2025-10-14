@@ -735,3 +735,172 @@ func Test_ReflectNestedStructJsonTags(t *testing.T) {
 		t.Error("expected sort option for Details.Pricing.Currency field")
 	}
 }
+
+func Test_ReflectUnsignedIntegers(t *testing.T) {
+	type Stats struct {
+		Count   uint    `reveald:"agg-size=50"`
+		Port    uint16
+		ID      uint64  `reveald:"histogram,interval=100"`
+		Flags   uint8
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(Stats{}))
+
+	dynamicFilterCount := 0
+	histogramCount := 0
+
+	for _, f := range features {
+		switch f.(type) {
+		case *featureset.DynamicFilterFeature:
+			dynamicFilterCount++
+		case *featureset.HistogramFeature:
+			histogramCount++
+		}
+	}
+
+	// Count, Port, Flags should have dynamic filters (ID has histogram instead)
+	if dynamicFilterCount != 3 {
+		t.Errorf("expected 3 dynamic filter features for unsigned ints, got %d", dynamicFilterCount)
+	}
+
+	// ID should have histogram
+	if histogramCount != 1 {
+		t.Errorf("expected 1 histogram feature for ID, got %d", histogramCount)
+	}
+}
+
+func Test_ReflectPointers(t *testing.T) {
+	type Optional struct {
+		Name   *string  `reveald:"dynamic"`
+		Count  *int
+		Price  *float64 `reveald:"histogram,interval=10"`
+		Active *bool
+		When   *time.Time `reveald:"date-histogram,interval=day"`
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(Optional{}))
+
+	dynamicFilterCount := 0
+	boolFilterCount := 0
+	histogramCount := 0
+	dateHistogramCount := 0
+
+	for _, f := range features {
+		switch f.(type) {
+		case *featureset.DynamicFilterFeature:
+			dynamicFilterCount++
+		case *featureset.DynamicBooleanFilterFeature:
+			boolFilterCount++
+		case *featureset.HistogramFeature:
+			histogramCount++
+		case *featureset.DateHistogramFeature:
+			dateHistogramCount++
+		}
+	}
+
+	// Name and Count should have dynamic filters
+	if dynamicFilterCount != 2 {
+		t.Errorf("expected 2 dynamic filter features for pointer fields, got %d", dynamicFilterCount)
+	}
+
+	// Active should have boolean filter
+	if boolFilterCount != 1 {
+		t.Errorf("expected 1 boolean filter for *bool, got %d", boolFilterCount)
+	}
+
+	// Price should have histogram
+	if histogramCount != 1 {
+		t.Errorf("expected 1 histogram for *float64, got %d", histogramCount)
+	}
+
+	// When should have date histogram
+	if dateHistogramCount != 1 {
+		t.Errorf("expected 1 date histogram for *time.Time, got %d", dateHistogramCount)
+	}
+}
+
+func Test_ReflectSlices(t *testing.T) {
+	type Tagged struct {
+		Tags       []string `reveald:"dynamic"`
+		Categories []string `reveald:"dynamic,agg-size=200"`
+		Scores     []int
+		Ratings    []float64 `reveald:"agg-size=30"`
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(Tagged{}))
+
+	dynamicFilterCount := 0
+	for _, f := range features {
+		if _, ok := f.(*featureset.DynamicFilterFeature); ok {
+			dynamicFilterCount++
+		}
+	}
+
+	// Tags, Categories, Scores, Ratings should all have dynamic filters
+	if dynamicFilterCount != 4 {
+		t.Errorf("expected 4 dynamic filter features for slice fields, got %d", dynamicFilterCount)
+	}
+
+	// Verify sorting works for slices (check that Tags doesn't incorrectly get .keyword)
+	sortFeature := findSortingFeature(features)
+	if sortFeature == nil {
+		t.Fatal("expected a sorting feature")
+	}
+
+	req := reveald.NewRequest()
+	builder := reveald.NewQueryBuilder(req, "test-index")
+
+	result, err := sortFeature.Process(builder, func(qb *reveald.QueryBuilder) (*reveald.Result, error) {
+		return &reveald.Result{
+			Aggregations: make(map[string][]*reveald.ResultBucket),
+		}, nil
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check that Tags field doesn't have .keyword suffix (slices are handled natively)
+	for _, opt := range result.Sorting.Options {
+		if strings.Contains(opt.Name, "Tags") {
+			// Slice of strings should NOT have .keyword
+			if strings.Contains(opt.Value, "Tags.keyword") {
+				t.Errorf("slice field Tags should not have .keyword suffix, got: %s", opt.Value)
+			}
+		}
+	}
+}
+
+func Test_ReflectCombinedNewTypes(t *testing.T) {
+	type Complex struct {
+		IDs        []uint64  `reveald:"agg-size=500"`
+		OptName    *string   `reveald:"dynamic"`
+		OptCount   *int      `reveald:"histogram,interval=50"`
+		Tags       []string  `reveald:"dynamic,no-sort"`
+		Port       uint16
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(Complex{}))
+
+	dynamicFilterCount := 0
+	histogramCount := 0
+
+	for _, f := range features {
+		switch f.(type) {
+		case *featureset.DynamicFilterFeature:
+			dynamicFilterCount++
+		case *featureset.HistogramFeature:
+			histogramCount++
+		}
+	}
+
+	// IDs, OptName, Tags, Port should have dynamic filters
+	if dynamicFilterCount != 4 {
+		t.Errorf("expected 4 dynamic filter features, got %d", dynamicFilterCount)
+	}
+
+	// OptCount should have histogram
+	if histogramCount != 1 {
+		t.Errorf("expected 1 histogram feature, got %d", histogramCount)
+	}
+}
