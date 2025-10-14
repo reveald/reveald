@@ -2,6 +2,7 @@ package featureset_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -296,3 +297,143 @@ func findSortingFeature(features []reveald.Feature) *featureset.SortingFeature {
 	}
 	return nil
 }
+
+func Test_ReflectHistogramFeature(t *testing.T) {
+	type TTarget struct {
+		Price  float64 `reveald:"histogram,interval=50"`
+		Count  int     `reveald:"histogram,interval=10"`
+		Rating float32 `reveald:"histogram"`
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+
+	histogramFeatures := []*featureset.HistogramFeature{}
+	for _, f := range features {
+		if hf, ok := f.(*featureset.HistogramFeature); ok {
+			histogramFeatures = append(histogramFeatures, hf)
+		}
+	}
+
+	if len(histogramFeatures) != 3 {
+		t.Fatalf("expected 3 histogram features, got %d", len(histogramFeatures))
+	}
+
+	// Verify that DynamicFilterFeature is NOT created for histogram fields
+	dynamicFeatures := []*featureset.DynamicFilterFeature{}
+	for _, f := range features {
+		if df, ok := f.(*featureset.DynamicFilterFeature); ok {
+			dynamicFeatures = append(dynamicFeatures, df)
+		}
+	}
+
+	if len(dynamicFeatures) != 0 {
+		t.Fatalf("expected 0 dynamic filter features for histogram fields, got %d", len(dynamicFeatures))
+	}
+}
+
+func Test_ReflectDateHistogramFeature(t *testing.T) {
+	type TTarget struct {
+		Created time.Time `reveald:"date-histogram,interval=day"`
+		Updated time.Time `reveald:"date-histogram,interval=month"`
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+
+	dateHistogramFeatures := []*featureset.DateHistogramFeature{}
+	for _, f := range features {
+		if dhf, ok := f.(*featureset.DateHistogramFeature); ok {
+			dateHistogramFeatures = append(dateHistogramFeatures, dhf)
+		}
+	}
+
+	if len(dateHistogramFeatures) != 2 {
+		t.Fatalf("expected 2 date histogram features, got %d", len(dateHistogramFeatures))
+	}
+
+	// Verify that DynamicFilterFeature is NOT created for date-histogram fields
+	dynamicFeatures := []*featureset.DynamicFilterFeature{}
+	for _, f := range features {
+		if df, ok := f.(*featureset.DynamicFilterFeature); ok {
+			dynamicFeatures = append(dynamicFeatures, df)
+		}
+	}
+
+	if len(dynamicFeatures) != 0 {
+		t.Fatalf("expected 0 dynamic filter features for date-histogram fields, got %d", len(dynamicFeatures))
+	}
+}
+
+func Test_ReflectCombinedTags(t *testing.T) {
+	type TTarget struct {
+		Name     string    `reveald:"dynamic,no-sort"`
+		Price    float64   `reveald:"histogram,interval=100"`
+		Created  time.Time `reveald:"date-histogram,interval=day"`
+		Category string    `reveald:"dynamic"`
+		Ignored  string    `reveald:"ignore"`
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+
+	// Count each feature type
+	histogramCount := 0
+	dateHistogramCount := 0
+	dynamicFilterCount := 0
+	sortingCount := 0
+
+	for _, f := range features {
+		switch f.(type) {
+		case *featureset.HistogramFeature:
+			histogramCount++
+		case *featureset.DateHistogramFeature:
+			dateHistogramCount++
+		case *featureset.DynamicFilterFeature:
+			dynamicFilterCount++
+		case *featureset.SortingFeature:
+			sortingCount++
+		}
+	}
+
+	if histogramCount != 1 {
+		t.Errorf("expected 1 histogram feature, got %d", histogramCount)
+	}
+
+	if dateHistogramCount != 1 {
+		t.Errorf("expected 1 date histogram feature, got %d", dateHistogramCount)
+	}
+
+	// Name and Category should have dynamic filters
+	if dynamicFilterCount != 2 {
+		t.Errorf("expected 2 dynamic filter features, got %d", dynamicFilterCount)
+	}
+
+	if sortingCount != 1 {
+		t.Errorf("expected 1 sorting feature, got %d", sortingCount)
+	}
+
+	// Verify Name field has no-sort respected
+	sortFeature := findSortingFeature(features)
+	if sortFeature == nil {
+		t.Fatal("expected a sorting feature")
+	}
+
+	req := reveald.NewRequest()
+	builder := reveald.NewQueryBuilder(req, "test-index")
+
+	result, err := sortFeature.Process(builder, func(qb *reveald.QueryBuilder) (*reveald.Result, error) {
+		return &reveald.Result{
+			Aggregations: make(map[string][]*reveald.ResultBucket),
+		}, nil
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check that Name field doesn't have sort options (no-sort tag)
+	for _, opt := range result.Sorting.Options {
+		if strings.Contains(opt.Name, "Name") {
+			t.Errorf("Name field should not have sort options due to no-sort tag, found: %s", opt.Name)
+		}
+	}
+}
+
