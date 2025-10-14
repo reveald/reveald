@@ -577,3 +577,77 @@ func Test_ReflectNestedStructWithPointer(t *testing.T) {
 		t.Errorf("expected 2 dynamic filters for nested fields through pointer, got %d", dynamicFilterCount)
 	}
 }
+
+func Test_ReflectCustomAggregationSize(t *testing.T) {
+	type Product struct {
+		Category string `reveald:"dynamic,agg-size=50"`
+		Brand    string `reveald:"dynamic,agg-size=200"`
+		Status   string `reveald:"dynamic"` // Uses default size 100
+		Price    int    `reveald:"agg-size=25"`
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(Product{}))
+
+	// We can't directly inspect the aggregation size from DynamicFilterFeature
+	// but we can verify the features were created
+	dynamicFilterCount := 0
+	for _, f := range features {
+		if _, ok := f.(*featureset.DynamicFilterFeature); ok {
+			dynamicFilterCount++
+		}
+	}
+
+	// Category, Brand, Status (all dynamic strings) + Price (int)
+	if dynamicFilterCount != 4 {
+		t.Errorf("expected 4 dynamic filter features, got %d", dynamicFilterCount)
+	}
+}
+
+func Test_ReflectAggSizeCombinations(t *testing.T) {
+	type Data struct {
+		Count      int     `reveald:"agg-size=500"`
+		Score      float64 `reveald:"agg-size=30"`
+		Name       string  `reveald:"dynamic,agg-size=75,no-sort"`
+		Timestamp  time.Time `reveald:"agg-size=150"`
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(Data{}))
+
+	dynamicFilterCount := 0
+	for _, f := range features {
+		if _, ok := f.(*featureset.DynamicFilterFeature); ok {
+			dynamicFilterCount++
+		}
+	}
+
+	// Count, Score, Name, Timestamp should all have dynamic filters
+	if dynamicFilterCount != 4 {
+		t.Errorf("expected 4 dynamic filter features with custom agg sizes, got %d", dynamicFilterCount)
+	}
+
+	// Verify Name field doesn't have sorting due to no-sort tag
+	sortFeature := findSortingFeature(features)
+	if sortFeature == nil {
+		t.Fatal("expected a sorting feature")
+	}
+
+	req := reveald.NewRequest()
+	builder := reveald.NewQueryBuilder(req, "test-index")
+
+	result, err := sortFeature.Process(builder, func(qb *reveald.QueryBuilder) (*reveald.Result, error) {
+		return &reveald.Result{
+			Aggregations: make(map[string][]*reveald.ResultBucket),
+		}, nil
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check that Name field doesn't have sort options
+	for _, opt := range result.Sorting.Options {
+		if strings.Contains(opt.Name, "Name") {
+			t.Errorf("Name field should not have sort options due to no-sort tag, found: %s", opt.Name)
+		}
+	}
+}

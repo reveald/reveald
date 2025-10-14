@@ -21,6 +21,7 @@ type tagOptions struct {
 	histogramInterval     float64               // Histogram bucket interval
 	dateHistogram         bool                  // Create date histogram (time.Time fields only)
 	dateHistogramInterval DateHistogramInterval // Date histogram interval
+	aggSize               int                   // Aggregation size for dynamic filters
 }
 
 // parseTagOptions parses a reveald tag into structured options.
@@ -30,10 +31,12 @@ type tagOptions struct {
 //   - "dynamic,no-sort" - multiple comma-separated options
 //   - "histogram,interval=100" - option with parameter
 //   - "date-histogram,interval=day" - date histogram with interval
+//   - "dynamic,agg-size=50" - custom aggregation size
 func parseTagOptions(tag string) tagOptions {
 	opts := tagOptions{
-		histogramInterval: 100, // default
+		histogramInterval:     100, // default
 		dateHistogramInterval: Day, // default
+		aggSize:               100, // default
 	}
 
 	if tag == "" {
@@ -58,6 +61,10 @@ func parseTagOptions(tag string) tagOptions {
 					}
 				} else if opts.dateHistogram {
 					opts.dateHistogramInterval = DateHistogramInterval(value)
+				}
+			case "agg-size":
+				if size, err := strconv.Atoi(value); err == nil {
+					opts.aggSize = size
 				}
 			}
 		} else {
@@ -166,6 +173,8 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //   - date-histogram: Create date histogram for time.Time fields
 //   - date-histogram,interval=I: Date histogram with interval (default: day)
 //     Valid intervals: second, minute, hour, day, week, month, quarter, year
+//   - agg-size=N: Set aggregation size for dynamic filters (default: 100)
+//     Controls the maximum number of buckets returned in aggregations
 //
 // ## Combining Tags
 //
@@ -235,6 +244,19 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //	// - HistogramFeature for Count with interval 10
 //	// - SortingFeature for all fields
 //
+// Custom aggregation size example:
+//
+//	type Catalog struct {
+//	    Category string `reveald:"dynamic,agg-size=50"`  // Return up to 50 category buckets
+//	    Brand    string `reveald:"dynamic,agg-size=200"` // Return up to 200 brand buckets
+//	    Status   string `reveald:"dynamic"`              // Uses default size 100
+//	    Price    float64 `reveald:"agg-size=30"`         // Price buckets limited to 30
+//	}
+//
+//	features := featureset.Reflect(reflect.TypeOf(Catalog{}))
+//	// Creates DynamicFilterFeatures with custom aggregation sizes
+//	// Useful when fields have different cardinality needs
+//
 // # Feature Types Generated
 //
 //   - DynamicFilterFeature: For filterable fields (strings with dynamic tag, numerics, time)
@@ -291,15 +313,15 @@ func Reflect(t reflect.Type) []reveald.Feature {
 			featureOpts = append(featureOpts, NewDynamicBooleanFilterFeature(fieldPath))
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			if !opts.histogram {
-				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(100)))
+				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
 			}
 		case reflect.Float32, reflect.Float64:
 			if !opts.histogram {
-				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(100)))
+				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
 			}
 		case reflect.TypeOf(time.Time{}).Kind():
 			if !opts.dateHistogram {
-				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(100)))
+				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
 			}
 		}
 
@@ -313,14 +335,14 @@ func Reflect(t reflect.Type) []reveald.Feature {
 		if opts.dynamic {
 			switch f.Type.Kind() {
 			case reflect.String:
-				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(100)))
+				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 				if !opts.histogram {
-					featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(100)))
+					featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
 				}
 			case reflect.Float32, reflect.Float64:
 				if !opts.histogram {
-					featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(100)))
+					featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
 				}
 			}
 		}
