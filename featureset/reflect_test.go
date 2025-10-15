@@ -269,23 +269,23 @@ func Test_ReflectSortingFeature(t *testing.T) {
 		t.Fatalf("expected 8 sort options, got %d", len(result.Sorting.Options))
 	}
 
-	// Verify Name field uses json tag override
+	// Verify Name field uses json tag override (now jsonPath is used for sort option names too)
 	hasNameDesc := false
 	hasNameAsc := false
 	for _, opt := range result.Sorting.Options {
-		if opt.Name == "Name-desc" {
+		if opt.Name == "name-overridden-desc" {
 			hasNameDesc = true
-			if opt.Value != "name-overridden.keyword" {
-				t.Errorf("expected Name-desc to use json tag 'name-overridden.keyword', got %s", opt.Value)
+			if opt.Value != "name-overridden" {
+				t.Errorf("expected name-overridden-desc to use json tag 'name-overridden', got %s", opt.Value)
 			}
 		}
-		if opt.Name == "Name-asc" {
+		if opt.Name == "name-overridden-asc" {
 			hasNameAsc = true
 		}
 	}
 
 	if !hasNameDesc || !hasNameAsc {
-		t.Error("expected both Name-desc and Name-asc sort options")
+		t.Error("expected both name-overridden-desc and name-overridden-asc sort options")
 	}
 }
 
@@ -532,20 +532,21 @@ func Test_ReflectDeeplyNestedStruct(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Check for nested field sort options
+	// Check for nested field sort options (now jsonPath is used for sort names)
+	// The nested path will be "Contact.Address.city" since json tags build up the path
 	hasContactAddressCity := false
 	for _, opt := range result.Sorting.Options {
-		if strings.Contains(opt.Name, "Contact.Address.City") {
+		if strings.Contains(opt.Name, "Contact.Address.city") {
 			hasContactAddressCity = true
 			// Verify json path is correct
-			if !strings.Contains(opt.Value, "city.keyword") {
-				t.Errorf("expected Contact.Address.City to use json path with 'city.keyword', got: %s", opt.Value)
+			if opt.Value != "Contact.Address.city" {
+				t.Errorf("expected Contact.Address.City to use json path 'Contact.Address.city', got: %s", opt.Value)
 			}
 		}
 	}
 
 	if !hasContactAddressCity {
-		t.Error("expected sort options for Contact.Address.City")
+		t.Error("expected sort options for Contact.Address.City (Contact.Address.city)")
 	}
 }
 
@@ -689,50 +690,48 @@ func Test_ReflectNestedStructJsonTags(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify top-level field uses json tag
+	// Verify top-level field uses json tag (now jsonPath is used for sort names too)
 	foundTopLevel := false
 	for _, opt := range result.Sorting.Options {
-		if strings.Contains(opt.Name, "Name") {
+		if strings.Contains(opt.Name, "product_name") {
 			foundTopLevel = true
-			if !strings.Contains(opt.Value, "product_name.keyword") {
-				t.Errorf("expected Name to use json tag 'product_name.keyword', got: %s", opt.Value)
+			if opt.Value != "product_name" {
+				t.Errorf("expected Name to use json tag 'product_name', got: %s", opt.Value)
 			}
 		}
 	}
 	if !foundTopLevel {
-		t.Error("expected sort option for Name field")
+		t.Error("expected sort option for Name field (product_name)")
 	}
 
 	// Verify nested struct field uses json tags at all levels
-	// Field path: Details.SKU
-	// JSON path should be: product_details.product_sku.keyword
+	// JSON path should be: product_details.product_sku
 	foundNested := false
 	for _, opt := range result.Sorting.Options {
-		if strings.Contains(opt.Name, "Details.SKU") {
+		if strings.Contains(opt.Name, "product_details.product_sku") {
 			foundNested = true
-			if opt.Value != "product_details.product_sku.keyword" {
-				t.Errorf("expected Details.SKU to use json path 'product_details.product_sku.keyword', got: %s", opt.Value)
+			if opt.Value != "product_details.product_sku" {
+				t.Errorf("expected Details.SKU to use json path 'product_details.product_sku', got: %s", opt.Value)
 			}
 		}
 	}
 	if !foundNested {
-		t.Error("expected sort option for Details.SKU field")
+		t.Error("expected sort option for Details.SKU field (product_details.product_sku)")
 	}
 
 	// Verify deeply nested field uses json tags at all levels
-	// Field path: Details.Pricing.Currency
-	// JSON path should be: product_details.pricing_info.currency_code.keyword
+	// JSON path should be: product_details.pricing_info.currency_code
 	foundDeeplyNested := false
 	for _, opt := range result.Sorting.Options {
-		if strings.Contains(opt.Name, "Details.Pricing.Currency") {
+		if strings.Contains(opt.Name, "product_details.pricing_info.currency_code") {
 			foundDeeplyNested = true
-			if opt.Value != "product_details.pricing_info.currency_code.keyword" {
-				t.Errorf("expected Details.Pricing.Currency to use json path 'product_details.pricing_info.currency_code.keyword', got: %s", opt.Value)
+			if opt.Value != "product_details.pricing_info.currency_code" {
+				t.Errorf("expected Details.Pricing.Currency to use json path 'product_details.pricing_info.currency_code', got: %s", opt.Value)
 			}
 		}
 	}
 	if !foundDeeplyNested {
-		t.Error("expected sort option for Details.Pricing.Currency field")
+		t.Error("expected sort option for Details.Pricing.Currency field (product_details.pricing_info.currency_code)")
 	}
 }
 
@@ -972,12 +971,12 @@ func Test_ReflectJsonTagDash(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Check that DashField uses "-" in Elasticsearch
+	// Check that DashField uses "-" in Elasticsearch (now jsonPath is used for sort names)
 	foundDash := false
 	for _, opt := range result.Sorting.Options {
-		if strings.Contains(opt.Name, "DashField") {
-			// The Elasticsearch field path should contain "-.keyword"
-			if !strings.Contains(opt.Value, "-.keyword") {
+		if strings.HasPrefix(opt.Name, "-") {
+			// The Elasticsearch field path should be "-"
+			if opt.Value != "-" {
 				t.Errorf("json:\"-,\" field should use '-' as name, got: %s", opt.Value)
 			}
 			foundDash = true
@@ -985,7 +984,7 @@ func Test_ReflectJsonTagDash(t *testing.T) {
 	}
 
 	if !foundDash {
-		t.Error("DashField not found in sorting options")
+		t.Error("field with json:\"-,\" tag not found in sorting options")
 	}
 }
 
@@ -1013,7 +1012,7 @@ func Test_ReflectJsonTagOmitEmpty(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify field names
+	// Verify field names (now using jsonPath for sort option names)
 	foundDefault := false
 	foundCustom := false
 	foundNoOptions := false
@@ -1021,21 +1020,21 @@ func Test_ReflectJsonTagOmitEmpty(t *testing.T) {
 	for _, opt := range result.Sorting.Options {
 		if strings.Contains(opt.Name, "DefaultName") {
 			// json:",omitempty" should keep the Go field name "DefaultName"
-			if !strings.Contains(opt.Value, "DefaultName.keyword") {
+			if opt.Value != "DefaultName" {
 				t.Errorf("json:\",omitempty\" should keep Go field name, got: %s", opt.Value)
 			}
 			foundDefault = true
 		}
-		if strings.Contains(opt.Name, "CustomName") {
+		if strings.Contains(opt.Name, "custom") {
 			// json:"custom,omitempty" should use "custom"
-			if !strings.Contains(opt.Value, "custom.keyword") {
+			if opt.Value != "custom" {
 				t.Errorf("json:\"custom,omitempty\" should use 'custom' as name, got: %s", opt.Value)
 			}
 			foundCustom = true
 		}
 		if strings.Contains(opt.Name, "NoOptions") {
 			// No json tag should keep the Go field name
-			if !strings.Contains(opt.Value, "NoOptions.keyword") {
+			if opt.Value != "NoOptions" {
 				t.Errorf("no json tag should keep Go field name, got: %s", opt.Value)
 			}
 			foundNoOptions = true
