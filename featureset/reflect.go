@@ -205,9 +205,8 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 		} else {
 			// Regular field
 			fields = append(fields, fieldInfo{
-				field:     f,
-				fieldPath: fieldPath,
-				jsonPath:  jsonPath,
+				field:    f,
+				jsonPath: jsonPath,
 			})
 		}
 	}
@@ -512,17 +511,15 @@ func Reflect(t reflect.Type, options ...ReflectionOption) []reveald.Feature {
 			continue
 		}
 
-		fieldPath := fieldInfo.fieldPath
 		jsonPath := fieldInfo.jsonPath
 
 		// Unwrap pointer and slice types for basic type checking
 		fieldType := f.Type
-		isSlice := false
+
 		if fieldType.Kind() == reflect.Pointer {
 			fieldType = fieldType.Elem()
 		}
 		if fieldType.Kind() == reflect.Slice {
-			isSlice = true
 			fieldType = fieldType.Elem() // Get element type
 		}
 
@@ -537,53 +534,50 @@ func Reflect(t reflect.Type, options ...ReflectionOption) []reveald.Feature {
 				if val, err := strconv.ParseFloat(opts.histogramInterval, 64); err == nil {
 					interval = val
 				}
-				featureOpts = append(featureOpts, NewHistogramFeature(fieldPath, WithInterval(interval)))
+				featureOpts = append(featureOpts, NewHistogramFeature(jsonPath, WithInterval(interval)))
 			}
 
 			// For time.Time, create date histogram
 			if fieldType == reflect.TypeOf(time.Time{}) || f.Type == reflect.TypeOf(&time.Time{}) {
-				featureOpts = append(featureOpts, NewDateHistogramFeature(fieldPath, DateHistogramInterval(opts.histogramInterval)))
+				featureOpts = append(featureOpts, NewDateHistogramFeature(jsonPath, DateHistogramInterval(opts.histogramInterval)))
 			}
 		}
 
 		// Add default features for types (check unwrapped type)
 		switch fieldType.Kind() {
 		case reflect.String:
-			// For slices of strings, don't add .keyword as Elasticsearch handles arrays natively
-			if !isSlice {
-				jsonPath += ".keyword"
-			}
+
 			// Add dynamic filter if enabled by default
 			if defaults.stringsDynamicByDefault && !opts.dynamic {
-				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
+				featureOpts = append(featureOpts, NewDynamicFilterFeature(jsonPath, WithAggregationSize(opts.aggSize)))
 			}
 
 		case reflect.Bool:
-			featureOpts = append(featureOpts, NewDynamicBooleanFilterFeature(fieldPath))
+			featureOpts = append(featureOpts, NewDynamicBooleanFilterFeature(jsonPath))
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 			reflect.Float32, reflect.Float64, reflect.TypeOf(time.Time{}).Kind():
 			if !opts.histogram {
-				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
+				featureOpts = append(featureOpts, NewDynamicFilterFeature(jsonPath, WithAggregationSize(opts.aggSize)))
 			}
 		}
 
 		// Add sorting options (respect both tag and defaults)
 		shouldSort := defaults.sortableByDefault && !opts.noSort
 		if shouldSort {
-			sortOpts = append(sortOpts, WithSortOption(fieldPath+defaults.sortDescSuffix, jsonPath, false))
-			sortOpts = append(sortOpts, WithSortOption(fieldPath+defaults.sortAscSuffix, jsonPath, true))
+			sortOpts = append(sortOpts, WithSortOption(jsonPath+defaults.sortDescSuffix, jsonPath, false))
+			sortOpts = append(sortOpts, WithSortOption(jsonPath+defaults.sortAscSuffix, jsonPath, true))
 		}
 
 		// Handle dynamic tag (use unwrapped type)
 		if opts.dynamic {
 			switch fieldType.Kind() {
 			case reflect.String:
-				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
+				featureOpts = append(featureOpts, NewDynamicFilterFeature(jsonPath, WithAggregationSize(opts.aggSize)))
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
 				if !opts.histogram {
-					featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
+					featureOpts = append(featureOpts, NewDynamicFilterFeature(jsonPath, WithAggregationSize(opts.aggSize)))
 				}
 			}
 		}

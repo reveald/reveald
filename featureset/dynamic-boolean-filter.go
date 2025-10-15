@@ -210,6 +210,7 @@ func (dbff *DynamicBooleanFilterFeature) handle(result *reveald.Result) (*reveal
 	}
 
 	buckets, ok := filters.Buckets.(map[string]types.FiltersBucket)
+	
 	if !ok {
 		return result, nil
 	}
