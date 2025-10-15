@@ -171,6 +171,12 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //   - []string, []int, []float64: Multi-valued fields (Elasticsearch handles arrays natively)
 //   - Slices of strings do NOT get .keyword suffix (arrays work directly in ES)
 //
+// Embedded struct support:
+//   - Embedded structs are fully supported via reflect.VisibleFields()
+//   - Fields are accessible via both promoted and qualified paths
+//   - Example: embedded field A.Value creates both "A.Value" and "Value" (promoted)
+//   - Shadowing works correctly: outer fields shadow embedded fields with same name
+//
 // # Struct Tags
 //
 // The reveald struct tag controls feature generation with the following options:
@@ -301,6 +307,28 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //	// Slices create aggregations over array elements
 //	// []string fields work without .keyword suffix
 //
+// Embedded struct example:
+//
+//	type BaseModel struct {
+//	    ID        uint64    `reveald:"dynamic"`
+//	    CreatedAt time.Time `reveald:"histogram,interval=day"`
+//	}
+//
+//	type Product struct {
+//	    BaseModel              // Embedded struct
+//	    Name      string `reveald:"dynamic"`
+//	    ID        uint64 `reveald:"dynamic"` // Shadows BaseModel.ID
+//	}
+//
+//	features := featureset.Reflect(reflect.TypeOf(Product{}))
+//	// Creates features for:
+//	// - BaseModel.ID (qualified path to embedded field)
+//	// - BaseModel.CreatedAt (qualified path)
+//	// - ID (promoted, but refers to Product.ID which shadows BaseModel.ID)
+//	// - CreatedAt (promoted from BaseModel)
+//	// - Name (from Product)
+//	// Both qualified and promoted paths are available for filtering/sorting
+//
 // # Feature Types Generated
 //
 //   - DynamicFilterFeature: For filterable fields (strings with dynamic tag, numerics, time)
@@ -323,6 +351,8 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //   - Pointers (*string, *int, etc.) are unwrapped automatically - useful for optional fields
 //   - Slices ([]string, []int) are treated as multi-valued fields - no .keyword suffix for []string
 //   - Nil pointer values are handled by Elasticsearch as missing fields
+//   - Embedded structs create both qualified (Embedded.Field) and promoted (Field) paths
+//   - Field shadowing in embedded structs works correctly per Go semantics
 func Reflect(t reflect.Type) []reveald.Feature {
 	sortOpts := make([]SortingOption, 0)
 	featureOpts := make([]reveald.Feature, 0)
