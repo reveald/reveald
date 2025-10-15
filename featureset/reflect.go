@@ -20,6 +20,7 @@ type tagOptions struct {
 	histogram         bool   // Create histogram aggregation (numeric or time fields)
 	histogramInterval string // Histogram bucket interval (numeric value or date interval like "day")
 	aggSize           int    // Aggregation size for dynamic filters
+	searchable        bool   // Add field to multi-field search query
 }
 
 // parseTagOptions parses a reveald tag into structured options.
@@ -30,6 +31,7 @@ type tagOptions struct {
 //   - "histogram,interval=100" - histogram with numeric interval
 //   - "histogram,interval=day" - histogram with date interval
 //   - "dynamic,agg-size=50" - custom aggregation size
+//   - "searchable" - add field to full-text search
 func parseTagOptions(tag string) tagOptions {
 	opts := tagOptions{
 		histogramInterval: "100", // default (works for both numeric and date histograms)
@@ -69,6 +71,8 @@ func parseTagOptions(tag string) tagOptions {
 				opts.dynamic = true
 			case "histogram":
 				opts.histogram = true
+			case "searchable":
+				opts.searchable = true
 			}
 		}
 	}
@@ -186,6 +190,7 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //   - ignore: Skip this field entirely (no features generated)
 //   - dynamic: Create dynamic filter for string fields
 //   - no-sort: Don't create sorting options for this field
+//   - searchable: Add field to full-text search (creates QueryFilterFeature)
 //
 // ## Aggregation Tags
 //
@@ -329,6 +334,23 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //	// - Name (from Product)
 //	// Both qualified and promoted paths are available for filtering/sorting
 //
+// Full-text search example:
+//
+//	type Article struct {
+//	    Title       string `reveald:"dynamic,searchable"`
+//	    Description string `reveald:"searchable"`
+//	    Body        string `reveald:"searchable"`
+//	    Author      string `reveald:"dynamic"`
+//	    Published   time.Time
+//	}
+//
+//	features := featureset.Reflect(reflect.TypeOf(Article{}))
+//	// Creates:
+//	// - DynamicFilterFeature for Title and Author
+//	// - QueryFilterFeature with fields: [Title, Description, Body]
+//	//   Enables full-text search across these fields using the "q" parameter
+//	// - SortingFeature for all fields
+//
 // # Feature Types Generated
 //
 //   - DynamicFilterFeature: For filterable fields (strings with dynamic tag, numerics, time)
@@ -336,6 +358,7 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //   - HistogramFeature: For numeric fields with histogram tag
 //   - DateHistogramFeature: For time.Time fields with histogram tag
 //   - SortingFeature: One feature with sort options for all non-ignored, non-no-sort fields
+//   - QueryFilterFeature: Created when any field has searchable tag (full-text search)
 //
 // # Notes
 //
@@ -353,9 +376,12 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //   - Nil pointer values are handled by Elasticsearch as missing fields
 //   - Embedded structs create both qualified (Embedded.Field) and promoted (Field) paths
 //   - Field shadowing in embedded structs works correctly per Go semantics
+//   - The searchable tag collects fields into a QueryFilterFeature for full-text search
+//   - QueryFilterFeature responds to the "q" request parameter by default
 func Reflect(t reflect.Type) []reveald.Feature {
 	sortOpts := make([]SortingOption, 0)
 	featureOpts := make([]reveald.Feature, 0)
+	searchableFields := make([]string, 0)
 
 	fields := collectFields(t, "", "")
 
@@ -438,9 +464,17 @@ func Reflect(t reflect.Type) []reveald.Feature {
 				}
 			}
 		}
+
+		// Collect searchable fields
+		if opts.searchable {
+			searchableFields = append(searchableFields, jsonPath)
+		}
 	}
 	if len(sortOpts) > 0 {
 		featureOpts = append(featureOpts, NewSortingFeature("sort", sortOpts...))
+	}
+	if len(searchableFields) > 0 {
+		featureOpts = append(featureOpts, NewQueryFilterFeature(WithFields(searchableFields...)))
 	}
 	return featureOpts
 }

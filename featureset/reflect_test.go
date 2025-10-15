@@ -1135,3 +1135,46 @@ func Test_ReflectEmbeddedStruct(t *testing.T) {
 		t.Errorf("expected 5 dynamic filters (both qualified and promoted paths), got %d", dynamicFilterCount)
 	}
 }
+
+func Test_ReflectSearchable(t *testing.T) {
+	type Article struct {
+		Title       string `reveald:"dynamic,searchable"`
+		Description string `reveald:"searchable"`
+		Body        string `reveald:"searchable"`
+		Author      string `reveald:"dynamic"`
+		Published   time.Time
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(Article{}))
+
+	// Count dynamic filters and query filters
+	dynamicFilterCount := 0
+	queryFilterCount := 0
+	var queryFilter *featureset.QueryFilterFeature
+
+	for _, f := range features {
+		switch ft := f.(type) {
+		case *featureset.DynamicFilterFeature:
+			dynamicFilterCount++
+		case *featureset.QueryFilterFeature:
+			queryFilterCount++
+			queryFilter = ft
+		}
+	}
+
+	// Should have 3 dynamic filters (Title, Author, Published)
+	// Published time.Time gets an automatic dynamic filter
+	if dynamicFilterCount != 3 {
+		t.Errorf("expected 3 dynamic filters, got %d", dynamicFilterCount)
+	}
+
+	// Should have 1 query filter
+	if queryFilterCount != 1 {
+		t.Errorf("expected 1 query filter, got %d", queryFilterCount)
+	}
+
+	// Verify query filter was created
+	if queryFilter == nil {
+		t.Fatal("expected QueryFilterFeature to be created")
+	}
+}
