@@ -478,3 +478,7 @@ func Reflect(t reflect.Type) []reveald.Feature {
 	}
 	return featureOpts
 }
+
+func ReflectType[T any]() []reveald.Feature {
+	return Reflect(reflect.TypeOf((*T)(nil)).Elem())
+}
