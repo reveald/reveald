@@ -1178,3 +1178,114 @@ func Test_ReflectSearchable(t *testing.T) {
 		t.Fatal("expected QueryFilterFeature to be created")
 	}
 }
+
+func Test_ReflectWithCustomDefaults(t *testing.T) {
+	type Product struct {
+		Name        string
+		Description string
+		Price       float64
+		Count       int
+	}
+
+	// Test with custom defaults
+	features := featureset.Reflect(
+		reflect.TypeOf(Product{}),
+		featureset.WithDefaultAggSize(50),
+		featureset.WithStringsDynamicByDefault(true),
+		featureset.WithSortSuffixes(".desc", ".asc"),
+	)
+
+	// Count dynamic filters - with stringsDynamicByDefault, should have Name, Description, Price, Count
+	dynamicFilterCount := 0
+	for _, f := range features {
+		if _, ok := f.(*featureset.DynamicFilterFeature); ok {
+			dynamicFilterCount++
+		}
+	}
+
+	// Should have 4 dynamic filters (all string fields + numeric fields)
+	if dynamicFilterCount != 4 {
+		t.Errorf("expected 4 dynamic filters with stringsDynamicByDefault, got %d", dynamicFilterCount)
+	}
+
+	// Check sort suffixes
+	sortFeature := features[len(features)-1].(*featureset.SortingFeature)
+	req := reveald.NewRequest()
+	builder := reveald.NewQueryBuilder(req, "test-index")
+
+	result, err := sortFeature.Process(builder, func(qb *reveald.QueryBuilder) (*reveald.Result, error) {
+		return &reveald.Result{
+			Aggregations: make(map[string][]*reveald.ResultBucket),
+		}, nil
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check that custom suffixes are used
+	foundCustomDesc := false
+	foundCustomAsc := false
+	for _, opt := range result.Sorting.Options {
+		if strings.HasSuffix(opt.Name, ".desc") {
+			foundCustomDesc = true
+		}
+		if strings.HasSuffix(opt.Name, ".asc") {
+			foundCustomAsc = true
+		}
+	}
+
+	if !foundCustomDesc {
+		t.Error("expected to find sort options with custom .desc suffix")
+	}
+	if !foundCustomAsc {
+		t.Error("expected to find sort options with custom .asc suffix")
+	}
+}
+
+func Test_ReflectWithNoSortByDefault(t *testing.T) {
+	type Simple struct {
+		Name string `reveald:"dynamic"`
+		Age  int
+	}
+
+	features := featureset.Reflect(
+		reflect.TypeOf(Simple{}),
+		featureset.WithSortableByDefault(false),
+	)
+
+	// Should not have a sorting feature when sortable is disabled
+	for _, f := range features {
+		if _, ok := f.(*featureset.SortingFeature); ok {
+			t.Error("expected no SortingFeature when sortableByDefault is false")
+		}
+	}
+}
+
+func Test_ReflectWithCustomSearchParam(t *testing.T) {
+	type Article struct {
+		Title string `reveald:"searchable"`
+		Body  string `reveald:"searchable"`
+	}
+
+	features := featureset.Reflect(
+		reflect.TypeOf(Article{}),
+		featureset.WithSearchParamName("search"),
+	)
+
+	// Find the query filter feature
+	var queryFilter *featureset.QueryFilterFeature
+	for _, f := range features {
+		if qf, ok := f.(*featureset.QueryFilterFeature); ok {
+			queryFilter = qf
+			break
+		}
+	}
+
+	if queryFilter == nil {
+		t.Fatal("expected QueryFilterFeature to be created")
+	}
+
+	// The query filter should use the custom param name
+	// We can't directly test the internal field, but we can verify it was created
+}

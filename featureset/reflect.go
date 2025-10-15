@@ -9,6 +9,71 @@ import (
 	"github.com/reveald/reveald"
 )
 
+// reflectionDefaults holds default configuration for the Reflect function.
+type reflectionDefaults struct {
+	defaultAggSize           int    // Default aggregation size
+	defaultHistogramInterval string // Default histogram interval
+	defaultDateInterval      string // Default date histogram interval
+	stringsDynamicByDefault  bool   // Whether string fields get dynamic filters by default
+	sortableByDefault        bool   // Whether fields are sortable by default
+	sortDescSuffix           string // Suffix for descending sort (e.g., "-desc")
+	sortAscSuffix            string // Suffix for ascending sort (e.g., "-asc")
+	searchParamName          string // Query parameter name for search (default "q")
+}
+
+// ReflectionOption is a functional option for configuring reflection defaults.
+type ReflectionOption func(*reflectionDefaults)
+
+// WithDefaultAggSize sets the default aggregation size for dynamic filters.
+func WithDefaultAggSize(size int) ReflectionOption {
+	return func(rd *reflectionDefaults) {
+		rd.defaultAggSize = size
+	}
+}
+
+// WithDefaultHistogramInterval sets the default interval for numeric histograms.
+func WithDefaultHistogramInterval(interval string) ReflectionOption {
+	return func(rd *reflectionDefaults) {
+		rd.defaultHistogramInterval = interval
+	}
+}
+
+// WithDefaultDateInterval sets the default interval for date histograms.
+func WithDefaultDateInterval(interval string) ReflectionOption {
+	return func(rd *reflectionDefaults) {
+		rd.defaultDateInterval = interval
+	}
+}
+
+// WithStringsDynamicByDefault controls whether string fields get dynamic filters automatically.
+func WithStringsDynamicByDefault(enabled bool) ReflectionOption {
+	return func(rd *reflectionDefaults) {
+		rd.stringsDynamicByDefault = enabled
+	}
+}
+
+// WithSortableByDefault controls whether fields are sortable by default.
+func WithSortableByDefault(enabled bool) ReflectionOption {
+	return func(rd *reflectionDefaults) {
+		rd.sortableByDefault = enabled
+	}
+}
+
+// WithSortSuffixes sets custom suffixes for sort options.
+func WithSortSuffixes(descSuffix, ascSuffix string) ReflectionOption {
+	return func(rd *reflectionDefaults) {
+		rd.sortDescSuffix = descSuffix
+		rd.sortAscSuffix = ascSuffix
+	}
+}
+
+// WithSearchParamName sets the query parameter name for full-text search.
+func WithSearchParamName(name string) ReflectionOption {
+	return func(rd *reflectionDefaults) {
+		rd.searchParamName = name
+	}
+}
+
 // tagOptions represents parsed options from a reveald struct tag.
 //
 // These options control how the Reflect function generates features
@@ -32,10 +97,10 @@ type tagOptions struct {
 //   - "histogram,interval=day" - histogram with date interval
 //   - "dynamic,agg-size=50" - custom aggregation size
 //   - "searchable" - add field to full-text search
-func parseTagOptions(tag string) tagOptions {
+func parseTagOptions(tag string, defaults *reflectionDefaults) tagOptions {
 	opts := tagOptions{
-		histogramInterval: "100", // default (works for both numeric and date histograms)
-		aggSize:           100,   // default
+		histogramInterval: defaults.defaultHistogramInterval,
+		aggSize:           defaults.defaultAggSize,
 	}
 
 	if tag == "" {
@@ -155,6 +220,9 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 // It analyzes struct fields and their tags to create appropriate features for filtering,
 // aggregation, and sorting. Nested structs are processed recursively, with field paths
 // constructed using dot notation (e.g., "Details.Price").
+//
+// Configuration options can be passed to customize default behavior using functional options
+// like WithDefaultAggSize, WithStringsDynamicByDefault, etc.
 //
 // # Supported Field Types
 //
@@ -351,6 +419,26 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //	//   Enables full-text search across these fields using the "q" parameter
 //	// - SortingFeature for all fields
 //
+// Custom defaults example:
+//
+//	type Product struct {
+//	    Name  string
+//	    Price float64
+//	    Stock int
+//	}
+//
+//	features := featureset.Reflect(
+//	    reflect.TypeOf(Product{}),
+//	    featureset.WithDefaultAggSize(50),                // Custom aggregation size
+//	    featureset.WithStringsDynamicByDefault(true),     // Strings get filters automatically
+//	    featureset.WithSortSuffixes(".desc", ".asc"),     // Custom sort naming
+//	    featureset.WithSearchParamName("search"),         // Use "search" instead of "q"
+//	    featureset.WithDefaultHistogramInterval("50"),    // Default histogram interval
+//	)
+//	// Creates dynamic filters for Name (string), Price, and Stock
+//	// Uses custom sort suffixes and aggregation sizes
+//	// Any searchable fields would use "search" parameter instead of "q"
+//
 // # Feature Types Generated
 //
 //   - DynamicFilterFeature: For filterable fields (strings with dynamic tag, numerics, time)
@@ -360,13 +448,26 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //   - SortingFeature: One feature with sort options for all non-ignored, non-no-sort fields
 //   - QueryFilterFeature: Created when any field has searchable tag (full-text search)
 //
+// # Configuration Options
+//
+// The following ReflectionOption functions can be passed to customize defaults:
+//
+//   - WithDefaultAggSize(size int): Set default aggregation size (default: 100)
+//   - WithDefaultHistogramInterval(interval string): Set numeric histogram interval (default: "100")
+//   - WithDefaultDateInterval(interval string): Set date histogram interval (default: "day")
+//   - WithStringsDynamicByDefault(enabled bool): Auto-create filters for strings (default: false)
+//   - WithSortableByDefault(enabled bool): Enable/disable sorting by default (default: true)
+//   - WithSortSuffixes(desc, asc string): Customize sort option suffixes (default: "-desc", "-asc")
+//   - WithSearchParamName(name string): Set query parameter for search (default: "q")
+//
 // # Notes
 //
-//   - String fields require the "dynamic" tag to create filters (unlike other types)
+//   - String fields require the "dynamic" tag to create filters (unless WithStringsDynamicByDefault is true)
 //   - The histogram tag is type-aware: creates numeric or date histogram based on field type
 //   - Histogram tags replace the default dynamic filter for that field
 //   - time.Time fields are special-cased and not treated as regular structs
-//   - All fields (including nested) get sorting options unless "ignore" or "no-sort" is specified
+//   - All fields get sorting options by default unless "ignore" or "no-sort" tag is used
+//   - Sorting can be disabled globally with WithSortableByDefault(false)
 //   - Field paths use Go field names (e.g., "Details.Price")
 //   - Elasticsearch field names use json tags at all levels (e.g., "product_details.price_amount")
 //   - If no json tag is present, the Go field name is used as-is for Elasticsearch
@@ -377,8 +478,25 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //   - Embedded structs create both qualified (Embedded.Field) and promoted (Field) paths
 //   - Field shadowing in embedded structs works correctly per Go semantics
 //   - The searchable tag collects fields into a QueryFilterFeature for full-text search
-//   - QueryFilterFeature responds to the "q" request parameter by default
-func Reflect(t reflect.Type) []reveald.Feature {
+//   - QueryFilterFeature responds to configured search parameter (default "q")
+func Reflect(t reflect.Type, options ...ReflectionOption) []reveald.Feature {
+	// Initialize defaults
+	defaults := &reflectionDefaults{
+		defaultAggSize:           100,
+		defaultHistogramInterval: "100",
+		defaultDateInterval:      "day",
+		stringsDynamicByDefault:  false,
+		sortableByDefault:        true,
+		sortDescSuffix:           "-desc",
+		sortAscSuffix:            "-asc",
+		searchParamName:          "q",
+	}
+
+	// Apply custom options
+	for _, opt := range options {
+		opt(defaults)
+	}
+
 	sortOpts := make([]SortingOption, 0)
 	featureOpts := make([]reveald.Feature, 0)
 	searchableFields := make([]string, 0)
@@ -388,7 +506,7 @@ func Reflect(t reflect.Type) []reveald.Feature {
 	for _, fieldInfo := range fields {
 		f := fieldInfo.field
 		rtag := f.Tag.Get("reveald")
-		opts := parseTagOptions(rtag)
+		opts := parseTagOptions(rtag, defaults)
 
 		if opts.ignore {
 			continue
@@ -435,6 +553,10 @@ func Reflect(t reflect.Type) []reveald.Feature {
 			if !isSlice {
 				jsonPath += ".keyword"
 			}
+			// Add dynamic filter if enabled by default
+			if defaults.stringsDynamicByDefault && !opts.dynamic {
+				featureOpts = append(featureOpts, NewDynamicFilterFeature(fieldPath, WithAggregationSize(opts.aggSize)))
+			}
 
 		case reflect.Bool:
 			featureOpts = append(featureOpts, NewDynamicBooleanFilterFeature(fieldPath))
@@ -446,10 +568,11 @@ func Reflect(t reflect.Type) []reveald.Feature {
 			}
 		}
 
-		// Add sorting options
-		if !opts.noSort {
-			sortOpts = append(sortOpts, WithSortOption(fieldPath+"-desc", jsonPath, false))
-			sortOpts = append(sortOpts, WithSortOption(fieldPath+"-asc", jsonPath, true))
+		// Add sorting options (respect both tag and defaults)
+		shouldSort := defaults.sortableByDefault && !opts.noSort
+		if shouldSort {
+			sortOpts = append(sortOpts, WithSortOption(fieldPath+defaults.sortDescSuffix, jsonPath, false))
+			sortOpts = append(sortOpts, WithSortOption(fieldPath+defaults.sortAscSuffix, jsonPath, true))
 		}
 
 		// Handle dynamic tag (use unwrapped type)
@@ -474,11 +597,14 @@ func Reflect(t reflect.Type) []reveald.Feature {
 		featureOpts = append(featureOpts, NewSortingFeature("sort", sortOpts...))
 	}
 	if len(searchableFields) > 0 {
-		featureOpts = append(featureOpts, NewQueryFilterFeature(WithFields(searchableFields...)))
+		featureOpts = append(featureOpts, NewQueryFilterFeature(
+			WithQueryParam(defaults.searchParamName),
+			WithFields(searchableFields...),
+		))
 	}
 	return featureOpts
 }
 
-func ReflectType[T any]() []reveald.Feature {
-	return Reflect(reflect.TypeOf((*T)(nil)).Elem())
+func ReflectType[T any](options ...ReflectionOption) []reveald.Feature {
+	return Reflect(reflect.TypeOf((*T)(nil)).Elem(), options...)
 }
