@@ -1052,3 +1052,86 @@ func Test_ReflectJsonTagOmitEmpty(t *testing.T) {
 		t.Error("NoOptions field not found in sorting options")
 	}
 }
+
+func Test_ReflectEmbeddedStruct(t *testing.T) {
+	type A struct {
+		Value string `reveald:"dynamic"`
+		Count int
+	}
+
+	type B struct {
+		A                      // Embedded struct
+		Name  string `reveald:"dynamic"`
+		Value string `reveald:"dynamic"` // Shadows A.Value
+	}
+
+	features := featureset.Reflect(reflect.TypeOf(B{}))
+
+	// Get the sorting feature to check field paths
+	sortFeature := features[len(features)-1].(*featureset.SortingFeature)
+	req := reveald.NewRequest()
+	builder := reveald.NewQueryBuilder(req, "test-index")
+
+	result, err := sortFeature.Process(builder, func(qb *reveald.QueryBuilder) (*reveald.Result, error) {
+		return &reveald.Result{
+			Aggregations: make(map[string][]*reveald.ResultBucket),
+		}, nil
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check what fields are visible
+	foundFields := make(map[string]bool)
+	for _, opt := range result.Sorting.Options {
+		// Extract field name (remove -asc/-desc suffix)
+		name := opt.Name
+		name = strings.TrimSuffix(name, "-asc")
+		name = strings.TrimSuffix(name, "-desc")
+		foundFields[name] = true
+	}
+
+	// reflect.VisibleFields promotes embedded fields, so we should see:
+	// - Value (from B, shadows A.Value)
+	// - Count (promoted from A)
+	// - Name (from B)
+
+	if !foundFields["Value"] {
+		t.Error("Expected Value field from B (should shadow A.Value)")
+	}
+	if !foundFields["Count"] {
+		t.Error("Expected Count field promoted from embedded A")
+	}
+	if !foundFields["Name"] {
+		t.Error("Expected Name field from B")
+	}
+
+	// reflect.VisibleFields returns both promoted and qualified paths for embedded fields:
+	// - A.Value (qualified path to embedded field)
+	// - Value (promoted, but shadowed by B.Value)
+	// - A.Count (qualified path)
+	// - Count (promoted from A)
+	// - Name (from B)
+
+	// Check that all expected fields exist
+	expectedFields := []string{"A.Value", "A.Count", "Count", "Value", "Name"}
+	for _, expected := range expectedFields {
+		if !foundFields[expected] {
+			t.Errorf("Expected field %s not found", expected)
+		}
+	}
+
+	// Count dynamic filters
+	// Should have 5: A.Value (dynamic tag), A.Count (int auto), Count (promoted, int auto), Name (dynamic tag), Value (dynamic tag, shadows A.Value)
+	dynamicFilterCount := 0
+	for _, f := range features {
+		if _, ok := f.(*featureset.DynamicFilterFeature); ok {
+			dynamicFilterCount++
+		}
+	}
+
+	if dynamicFilterCount != 5 {
+		t.Errorf("expected 5 dynamic filters (both qualified and promoted paths), got %d", dynamicFilterCount)
+	}
+}
