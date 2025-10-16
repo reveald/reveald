@@ -147,9 +147,8 @@ func parseTagOptions(tag string, defaults *reflectionDefaults) tagOptions {
 
 // fieldInfo holds information about a field including its path
 type fieldInfo struct {
-	field     reflect.StructField
-	fieldPath string // e.g., "Details.Price"
-	jsonPath  string // e.g., "details.price.keyword"
+	field    reflect.StructField
+	jsonPath string // e.g., "details.price.keyword"
 }
 
 // collectFields recursively collects all fields including nested struct fields
