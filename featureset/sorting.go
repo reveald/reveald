@@ -2,7 +2,7 @@ package featureset
 
 import (
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types/enums/sortorder"
-	"github.com/reveald/reveald"
+	"github.com/reveald/reveald/v1"
 )
 
 // sortingOption represents a single sort option with a property name and sort direction.

@@ -2,7 +2,7 @@ package featureset
 
 import (
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
-	"github.com/reveald/reveald"
+	"github.com/reveald/reveald/v1"
 )
 
 // TermsScriptedFieldFeature creates a terms-based scripted field and optionally filters on it.

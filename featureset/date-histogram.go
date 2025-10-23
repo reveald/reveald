@@ -6,7 +6,7 @@ import (
 
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types/enums/calendarinterval"
-	"github.com/reveald/reveald"
+	"github.com/reveald/reveald/v1"
 )
 
 // DateHistogramInterval specifies the date interval size

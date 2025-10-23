@@ -3,7 +3,7 @@ package featureset
 import (
 	"strconv"
 
-	"github.com/reveald/reveald"
+	"github.com/reveald/reveald/v1"
 )
 
 const (

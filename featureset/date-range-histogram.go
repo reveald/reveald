@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
-	"github.com/reveald/reveald"
+	"github.com/reveald/reveald/v1"
 )
 
 // DateRangeHistogramFeature is a feature that groups date values into specified ranges

@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
-	"github.com/reveald/reveald"
+	"github.com/reveald/reveald/v1"
 )
 
 type DynamicBooleanFilterFeature struct {

@@ -3,7 +3,7 @@ package featureset
 import (
 	"testing"
 
-	"github.com/reveald/reveald"
+	"github.com/reveald/reveald/v1"
 	"github.com/stretchr/testify/assert"
 )
 

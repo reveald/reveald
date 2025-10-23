@@ -3,7 +3,7 @@ package featureset
 import (
 	"strings"
 
-	"github.com/reveald/reveald"
+	"github.com/reveald/reveald/v1"
 )
 
 type rewriteSource struct {

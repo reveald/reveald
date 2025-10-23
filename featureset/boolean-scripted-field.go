@@ -3,7 +3,7 @@ package featureset
 import (
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types/enums/runtimefieldtype"
-	"github.com/reveald/reveald"
+	"github.com/reveald/reveald/v1"
 )
 
 // BooleanScriptedFieldFeature creates a boolean scripted field and optionally filters on it.
