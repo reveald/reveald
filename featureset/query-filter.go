@@ -2,7 +2,7 @@ package featureset
 
 import (
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
-	"github.com/reveald/reveald"
+	"github.com/reveald/reveald/v2"
 )
 
 // QueryFilterFeature adds a query string filter based on a request parameter.

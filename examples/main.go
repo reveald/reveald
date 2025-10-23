@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/reveald/reveald"
-	"github.com/reveald/reveald/featureset"
+	"github.com/reveald/reveald/v2"
+	"github.com/reveald/reveald/v2/featureset"
 )
 
 func main() {
@@ -22,7 +22,6 @@ func main() {
 		featureset.NewStaticFilterFeature(featureset.WithRequiredValue("status.keyword", "Active")),
 		featureset.NewDynamicFilterFeature("text_field"),
 		featureset.NewHistogramFeature("range_field", featureset.WithInterval(1000)))
-
 	if err != nil {
 		panic(err)
 	}

@@ -1,6 +1,6 @@
 package featureset
 
-import "github.com/reveald/reveald"
+import "github.com/reveald/reveald/v2"
 
 type PropertyInclusionFeature struct {
 	properties []string
