@@ -2,7 +2,7 @@ package featureset
 
 import (
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
-	"github.com/reveald/reveald"
+	"github.com/reveald/reveald/v2"
 )
 
 // StaticFilterFeature adds a static filter to the query.

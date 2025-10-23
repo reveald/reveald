@@ -267,7 +267,7 @@ jobs:
           echo "## Installation" >> release_notes.md
           echo "" >> release_notes.md
           echo '```bash' >> release_notes.md
-          echo "go get github.com/username/reveald@v${VERSION}" >> release_notes.md
+          echo "go get github.com/username/reveald/v2@v${VERSION}" >> release_notes.md
           echo '```' >> release_notes.md
           echo "" >> release_notes.md
           echo "## Usage" >> release_notes.md

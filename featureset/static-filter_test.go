@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
-	"github.com/reveald/reveald"
+	"github.com/reveald/reveald/v2"
 	"github.com/stretchr/testify/assert"
 )
 

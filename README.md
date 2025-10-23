@@ -18,7 +18,7 @@ Key features:
 ## Installation
 
 ```bash
-go get github.com/reveald/reveald
+go get github.com/reveald/reveald/v2
 ```
 
 Requirements:
@@ -30,7 +30,7 @@ Requirements:
 ### Creating a backend
 
 ```go
-import "github.com/reveald/reveald"
+import "github.com/reveald/reveald/v2"
 
 // Create an Elasticsearch backend
 backend, err := reveald.NewElasticBackend(
@@ -47,7 +47,7 @@ if err != nil {
 
 ```go
 import (
-    "github.com/reveald/reveald"
+    "github.com/reveald/reveald/v2"
     "github.com/elastic/go-elasticsearch/v8/typedapi/types"
 )
 
@@ -80,7 +80,7 @@ for _, hit := range result.Hits {
 
 ```go
 import (
-    "github.com/reveald/reveald"
+    "github.com/reveald/reveald/v2"
     "github.com/elastic/go-elasticsearch/v8/typedapi/types"
 )
 
@@ -133,7 +133,7 @@ result, err := backend.Execute(ctx, builder)
 
 ```go
 import (
-    "github.com/reveald/reveald"
+    "github.com/reveald/reveald/v2"
     "github.com/elastic/go-elasticsearch/v8/typedapi/types"
 )
 
@@ -181,7 +181,7 @@ builder.AddTermsAggregation("categories", "category", 10)
 
 ```go
 import (
-    "github.com/reveald/reveald"
+    "github.com/reveald/reveald/v2"
     "github.com/elastic/go-elasticsearch/v8/typedapi/types/enums/sortorder"
 )
 
