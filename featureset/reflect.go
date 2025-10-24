@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/reveald/reveald"
+	"github.com/reveald/reveald/v2"
 )
 
 // reflectionDefaults holds default configuration for the Reflect function.

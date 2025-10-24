@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/reveald/reveald"
-	"github.com/reveald/reveald/featureset"
+	"github.com/reveald/reveald/v2"
+	"github.com/reveald/reveald/v2/featureset"
 )
 
 func Test_ReflectionFeature(t *testing.T) {
@@ -606,10 +606,10 @@ func Test_ReflectCustomAggregationSize(t *testing.T) {
 
 func Test_ReflectAggSizeCombinations(t *testing.T) {
 	type Data struct {
-		Count      int     `reveald:"agg-size=500"`
-		Score      float64 `reveald:"agg-size=30"`
-		Name       string  `reveald:"dynamic,agg-size=75,no-sort"`
-		Timestamp  time.Time `reveald:"agg-size=150"`
+		Count     int       `reveald:"agg-size=500"`
+		Score     float64   `reveald:"agg-size=30"`
+		Name      string    `reveald:"dynamic,agg-size=75,no-sort"`
+		Timestamp time.Time `reveald:"agg-size=150"`
 	}
 
 	features := featureset.Reflect(reflect.TypeOf(Data{}))
@@ -737,10 +737,10 @@ func Test_ReflectNestedStructJsonTags(t *testing.T) {
 
 func Test_ReflectUnsignedIntegers(t *testing.T) {
 	type Stats struct {
-		Count   uint    `reveald:"agg-size=50"`
-		Port    uint16
-		ID      uint64  `reveald:"histogram,interval=100"`
-		Flags   uint8
+		Count uint `reveald:"agg-size=50"`
+		Port  uint16
+		ID    uint64 `reveald:"histogram,interval=100"`
+		Flags uint8
 	}
 
 	features := featureset.Reflect(reflect.TypeOf(Stats{}))
@@ -770,9 +770,9 @@ func Test_ReflectUnsignedIntegers(t *testing.T) {
 
 func Test_ReflectPointers(t *testing.T) {
 	type Optional struct {
-		Name   *string    `reveald:"dynamic"`
+		Name   *string `reveald:"dynamic"`
 		Count  *int
-		Price  *float64   `reveald:"histogram,interval=10"`
+		Price  *float64 `reveald:"histogram,interval=10"`
 		Active *bool
 		When   *time.Time `reveald:"histogram,interval=day"`
 	}
@@ -872,11 +872,11 @@ func Test_ReflectSlices(t *testing.T) {
 
 func Test_ReflectCombinedNewTypes(t *testing.T) {
 	type Complex struct {
-		IDs        []uint64  `reveald:"agg-size=500"`
-		OptName    *string   `reveald:"dynamic"`
-		OptCount   *int      `reveald:"histogram,interval=50"`
-		Tags       []string  `reveald:"dynamic,no-sort"`
-		Port       uint16
+		IDs      []uint64 `reveald:"agg-size=500"`
+		OptName  *string  `reveald:"dynamic"`
+		OptCount *int     `reveald:"histogram,interval=50"`
+		Tags     []string `reveald:"dynamic,no-sort"`
+		Port     uint16
 	}
 
 	features := featureset.Reflect(reflect.TypeOf(Complex{}))
@@ -1059,7 +1059,7 @@ func Test_ReflectEmbeddedStruct(t *testing.T) {
 	}
 
 	type B struct {
-		A                      // Embedded struct
+		A            // Embedded struct
 		Name  string `reveald:"dynamic"`
 		Value string `reveald:"dynamic"` // Shadows A.Value
 	}
