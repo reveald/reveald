@@ -477,7 +477,7 @@ func collectFields(t reflect.Type, prefix string, jsonPrefix string) []fieldInfo
 //   - Field shadowing in embedded structs works correctly per Go semantics
 //   - The searchable tag collects fields into a QueryFilterFeature for full-text search
 //   - QueryFilterFeature responds to configured search parameter (default "q")
-func Reflect(t reflect.Type, options ...ReflectionOption) []reveald.Feature {
+func Reflect(t reflect.Type, options ...ReflectionOption) ([]reveald.Feature, []SortingOption) {
 	// Initialize defaults
 	defaults := &reflectionDefaults{
 		defaultAggSize:           100,
@@ -586,18 +586,16 @@ func Reflect(t reflect.Type, options ...ReflectionOption) []reveald.Feature {
 			searchableFields = append(searchableFields, jsonPath)
 		}
 	}
-	if len(sortOpts) > 0 {
-		featureOpts = append(featureOpts, NewSortingFeature("sort", sortOpts...))
-	}
+
 	if len(searchableFields) > 0 {
 		featureOpts = append(featureOpts, NewQueryFilterFeature(
 			WithQueryParam(defaults.searchParamName),
 			WithFields(searchableFields...),
 		))
 	}
-	return featureOpts
+	return featureOpts, sortOpts
 }
 
-func ReflectType[T any](options ...ReflectionOption) []reveald.Feature {
+func ReflectType[T any](options ...ReflectionOption) ([]reveald.Feature, []SortingOption) {
 	return Reflect(reflect.TypeOf((*T)(nil)).Elem(), options...)
 }

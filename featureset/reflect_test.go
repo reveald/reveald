@@ -22,9 +22,15 @@ func Test_ReflectionFeature(t *testing.T) {
 		Updated  time.Time `reveald:"no-sort"`
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
-	if len(features) != 7 {
-		t.Fatal("expected 7 features, got", len(features))
+	features, sortOpts := featureset.Reflect(reflect.TypeOf(TTarget{}))
+	if len(features) != 6 {
+		t.Fatal("expected 6 features, got", len(features))
+	}
+
+	// Check sorting options: All fields except Ignored and Updated (no-sort)
+	// Name, Active, Category, Count, Created = 5 fields * 2 directions = 10 options
+	if len(sortOpts) != 10 {
+		t.Fatal("expected 10 sorting options, got", len(sortOpts))
 	}
 
 	for _, f := range features {
@@ -32,8 +38,6 @@ func Test_ReflectionFeature(t *testing.T) {
 		case *featureset.DynamicFilterFeature:
 			// pass
 		case *featureset.DynamicBooleanFilterFeature:
-			// pass
-		case *featureset.SortingFeature:
 			// pass
 		default:
 			t.Fatal("unexpected feature type", reflect.TypeOf(f))
@@ -47,7 +51,7 @@ func Test_ReflectDynamicStringFeatures(t *testing.T) {
 		Category string `reveald:"dynamic"`
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+	features, _ := featureset.Reflect(reflect.TypeOf(TTarget{}))
 
 	dynamicFeatures := []*featureset.DynamicFilterFeature{}
 	for _, f := range features {
@@ -70,7 +74,7 @@ func Test_ReflectBooleanFeatures(t *testing.T) {
 		Enabled bool
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+	features, _ := featureset.Reflect(reflect.TypeOf(TTarget{}))
 
 	boolFeatures := []*featureset.DynamicBooleanFilterFeature{}
 	for _, f := range features {
@@ -90,7 +94,7 @@ func Test_ReflectIntegerFeatures(t *testing.T) {
 		Age   int32
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+	features, _ := featureset.Reflect(reflect.TypeOf(TTarget{}))
 
 	dynamicFeatures := []*featureset.DynamicFilterFeature{}
 	for _, f := range features {
@@ -110,7 +114,7 @@ func Test_ReflectFloatFeatures(t *testing.T) {
 		Rating float32
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+	features, _ := featureset.Reflect(reflect.TypeOf(TTarget{}))
 
 	dynamicFeatures := []*featureset.DynamicFilterFeature{}
 	for _, f := range features {
@@ -130,7 +134,7 @@ func Test_ReflectDynamicFloatFeatures(t *testing.T) {
 		Rating float32 `reveald:"dynamic"`
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+	features, _ := featureset.Reflect(reflect.TypeOf(TTarget{}))
 
 	dynamicFeatures := []*featureset.DynamicFilterFeature{}
 	for _, f := range features {
@@ -152,7 +156,7 @@ func Test_ReflectTimeFeatures(t *testing.T) {
 		Updated time.Time
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+	features, _ := featureset.Reflect(reflect.TypeOf(TTarget{}))
 
 	dynamicFeatures := []*featureset.DynamicFilterFeature{}
 	for _, f := range features {
@@ -172,16 +176,16 @@ func Test_ReflectIgnoreTag(t *testing.T) {
 		Ignored string `reveald:"ignore"`
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+	features, sortOpts := featureset.Reflect(reflect.TypeOf(TTarget{}))
 
-	// Should have 1 sorting feature, no features for Ignored field
-	if len(features) != 1 {
-		t.Fatalf("expected 1 feature (sorting), got %d", len(features))
+	// Should have 0 features (no dynamic filter for Name without tag), sorting is separate
+	if len(features) != 0 {
+		t.Fatalf("expected 0 features, got %d", len(features))
 	}
 
-	_, ok := features[0].(*featureset.SortingFeature)
-	if !ok {
-		t.Error("expected only a sorting feature")
+	// Should have 2 sort options for Name field (asc and desc)
+	if len(sortOpts) != 2 {
+		t.Fatalf("expected 2 sorting options, got %d", len(sortOpts))
 	}
 }
 
@@ -191,16 +195,29 @@ func Test_ReflectNoSortTag(t *testing.T) {
 		Updated time.Time `reveald:"no-sort"`
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+	features, sortOpts := featureset.Reflect(reflect.TypeOf(TTarget{}))
 
-	sortFeature := findSortingFeature(features)
-	if sortFeature == nil {
-		t.Fatal("expected a sorting feature")
+	// Updated should have a dynamic filter (time.Time gets it automatically)
+	dynamicFilterCount := 0
+	for _, f := range features {
+		if _, ok := f.(*featureset.DynamicFilterFeature); ok {
+			dynamicFilterCount++
+		}
+	}
+
+	if dynamicFilterCount != 1 {
+		t.Fatalf("expected 1 dynamic filter for Updated, got %d", dynamicFilterCount)
 	}
 
 	// Name should have sorting options (2: asc and desc)
-	// Updated should not have sorting options
+	// Updated should not have sorting options (no-sort tag)
 	// Total should be 2 sort options
+	if len(sortOpts) != 2 {
+		t.Fatalf("expected 2 sort options (Name-asc, Name-desc), got %d", len(sortOpts))
+	}
+
+	// Create a SortingFeature with the options to test them
+	sortFeature := featureset.NewSortingFeature("sort", sortOpts...)
 	req := reveald.NewRequest()
 	builder := reveald.NewQueryBuilder(req, "test-index")
 
@@ -214,17 +231,9 @@ func Test_ReflectNoSortTag(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Sorting == nil {
-		t.Fatal("expected sorting information in result")
-	}
-
-	if len(result.Sorting.Options) != 2 {
-		t.Fatalf("expected 2 sort options (Name-asc, Name-desc), got %d", len(result.Sorting.Options))
-	}
-
 	// Verify that Updated field sorting options are not present
 	for _, opt := range result.Sorting.Options {
-		if opt.Name == "Updated-asc" || opt.Name == "Updated-desc" {
+		if strings.Contains(opt.Name, "Updated") {
 			t.Errorf("unexpected sort option for Updated field: %s", opt.Name)
 		}
 	}
@@ -238,18 +247,18 @@ func Test_ReflectSortingFeature(t *testing.T) {
 		Category string
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+	_, sortOpts := featureset.Reflect(reflect.TypeOf(TTarget{}))
 
-	sortFeature := findSortingFeature(features)
-	if sortFeature == nil {
-		t.Fatal("expected a sorting feature")
+	// 4 fields * 2 directions = 8 sort options
+	if len(sortOpts) != 8 {
+		t.Fatalf("expected 8 sort options, got %d", len(sortOpts))
 	}
 
-	// Test by executing the feature with a mock request/builder
+	// Create a SortingFeature to test the options
+	sortFeature := featureset.NewSortingFeature("sort", sortOpts...)
 	req := reveald.NewRequest()
 	builder := reveald.NewQueryBuilder(req, "test-index")
 
-	// Execute the feature to get the result with sorting options
 	result, err := sortFeature.Process(builder, func(qb *reveald.QueryBuilder) (*reveald.Result, error) {
 		return &reveald.Result{
 			Aggregations: make(map[string][]*reveald.ResultBucket),
@@ -260,16 +269,7 @@ func Test_ReflectSortingFeature(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Sorting == nil {
-		t.Fatal("expected sorting information in result")
-	}
-
-	// 4 fields * 2 directions = 8 sort options
-	if len(result.Sorting.Options) != 8 {
-		t.Fatalf("expected 8 sort options, got %d", len(result.Sorting.Options))
-	}
-
-	// Verify Name field uses json tag override (now jsonPath is used for sort option names too)
+	// Verify Name field uses json tag override
 	hasNameDesc := false
 	hasNameAsc := false
 	for _, opt := range result.Sorting.Options {
@@ -305,7 +305,7 @@ func Test_ReflectHistogramFeature(t *testing.T) {
 		Rating float32 `reveald:"histogram"`
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+	features, _ := featureset.Reflect(reflect.TypeOf(TTarget{}))
 
 	histogramFeatures := []*featureset.HistogramFeature{}
 	for _, f := range features {
@@ -337,7 +337,7 @@ func Test_ReflectDateHistogramFeature(t *testing.T) {
 		Updated time.Time `reveald:"histogram,interval=month"`
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+	features, _ := featureset.Reflect(reflect.TypeOf(TTarget{}))
 
 	dateHistogramFeatures := []*featureset.DateHistogramFeature{}
 	for _, f := range features {
@@ -372,13 +372,12 @@ func Test_ReflectCombinedTags(t *testing.T) {
 		Ignored  string    `reveald:"ignore"`
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(TTarget{}))
+	features, sortOpts := featureset.Reflect(reflect.TypeOf(TTarget{}))
 
 	// Count each feature type
 	histogramCount := 0
 	dateHistogramCount := 0
 	dynamicFilterCount := 0
-	sortingCount := 0
 
 	for _, f := range features {
 		switch f.(type) {
@@ -388,8 +387,6 @@ func Test_ReflectCombinedTags(t *testing.T) {
 			dateHistogramCount++
 		case *featureset.DynamicFilterFeature:
 			dynamicFilterCount++
-		case *featureset.SortingFeature:
-			sortingCount++
 		}
 	}
 
@@ -406,16 +403,15 @@ func Test_ReflectCombinedTags(t *testing.T) {
 		t.Errorf("expected 2 dynamic filter features, got %d", dynamicFilterCount)
 	}
 
-	if sortingCount != 1 {
-		t.Errorf("expected 1 sorting feature, got %d", sortingCount)
-	}
-
 	// Verify Name field has no-sort respected
-	sortFeature := findSortingFeature(features)
-	if sortFeature == nil {
-		t.Fatal("expected a sorting feature")
+	// Price, Created, Category should have sort options (6 total)
+	// Name should not (no-sort tag), Ignored should not (ignore tag)
+	if len(sortOpts) != 6 {
+		t.Fatalf("expected 6 sort options, got %d", len(sortOpts))
 	}
 
+	// Create a SortingFeature to test the options
+	sortFeature := featureset.NewSortingFeature("sort", sortOpts...)
 	req := reveald.NewRequest()
 	builder := reveald.NewQueryBuilder(req, "test-index")
 
@@ -449,7 +445,7 @@ func Test_ReflectNestedStruct(t *testing.T) {
 		Active  bool
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(Product{}))
+	features, _ := featureset.Reflect(reflect.TypeOf(Product{}))
 
 	// Count feature types
 	histogramCount := 0
@@ -499,7 +495,7 @@ func Test_ReflectDeeplyNestedStruct(t *testing.T) {
 		Contact Contact
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(Person{}))
+	features, sortOpts := featureset.Reflect(reflect.TypeOf(Person{}))
 
 	dynamicFilterCount := 0
 	for _, f := range features {
@@ -513,12 +509,15 @@ func Test_ReflectDeeplyNestedStruct(t *testing.T) {
 		t.Errorf("expected 1 dynamic filter for nested ZipCode, got %d", dynamicFilterCount)
 	}
 
-	// Verify sorting feature has nested field paths
-	sortFeature := findSortingFeature(features)
-	if sortFeature == nil {
-		t.Fatal("expected a sorting feature")
+	// Verify sorting options have nested field paths
+	// All fields should be sortable: Name, Contact.Email, Contact.Address.city, Contact.Address.ZipCode
+	// 4 fields * 2 directions = 8 options
+	if len(sortOpts) != 8 {
+		t.Fatalf("expected 8 sort options, got %d", len(sortOpts))
 	}
 
+	// Create a SortingFeature to test the options
+	sortFeature := featureset.NewSortingFeature("sort", sortOpts...)
 	req := reveald.NewRequest()
 	builder := reveald.NewQueryBuilder(req, "test-index")
 
@@ -561,7 +560,7 @@ func Test_ReflectNestedStructWithPointer(t *testing.T) {
 		Metadata *Metadata // Pointer to nested struct
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(Document{}))
+	features, _ := featureset.Reflect(reflect.TypeOf(Document{}))
 
 	dynamicFilterCount := 0
 
@@ -587,7 +586,7 @@ func Test_ReflectCustomAggregationSize(t *testing.T) {
 		Price    int    `reveald:"agg-size=25"`
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(Product{}))
+	features, _ := featureset.Reflect(reflect.TypeOf(Product{}))
 
 	// We can't directly inspect the aggregation size from DynamicFilterFeature
 	// but we can verify the features were created
@@ -612,7 +611,7 @@ func Test_ReflectAggSizeCombinations(t *testing.T) {
 		Timestamp time.Time `reveald:"agg-size=150"`
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(Data{}))
+	features, sortOpts := featureset.Reflect(reflect.TypeOf(Data{}))
 
 	dynamicFilterCount := 0
 	for _, f := range features {
@@ -627,11 +626,14 @@ func Test_ReflectAggSizeCombinations(t *testing.T) {
 	}
 
 	// Verify Name field doesn't have sorting due to no-sort tag
-	sortFeature := findSortingFeature(features)
-	if sortFeature == nil {
-		t.Fatal("expected a sorting feature")
+	// Count, Score, Timestamp should have sort options (3 * 2 = 6)
+	// Name should not (no-sort tag)
+	if len(sortOpts) != 6 {
+		t.Fatalf("expected 6 sort options, got %d", len(sortOpts))
 	}
 
+	// Create a SortingFeature to test the options
+	sortFeature := featureset.NewSortingFeature("sort", sortOpts...)
 	req := reveald.NewRequest()
 	builder := reveald.NewQueryBuilder(req, "test-index")
 
@@ -669,14 +671,10 @@ func Test_ReflectNestedStructJsonTags(t *testing.T) {
 		Details Details `json:"product_details"`
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(Product{}))
+	_, sortOpts := featureset.Reflect(reflect.TypeOf(Product{}))
 
-	// Verify sorting feature uses json tags at all nesting levels
-	sortFeature := findSortingFeature(features)
-	if sortFeature == nil {
-		t.Fatal("expected a sorting feature")
-	}
-
+	// Create a SortingFeature to test the options
+	sortFeature := featureset.NewSortingFeature("sort", sortOpts...)
 	req := reveald.NewRequest()
 	builder := reveald.NewQueryBuilder(req, "test-index")
 
@@ -743,7 +741,7 @@ func Test_ReflectUnsignedIntegers(t *testing.T) {
 		Flags uint8
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(Stats{}))
+	features, _ := featureset.Reflect(reflect.TypeOf(Stats{}))
 
 	dynamicFilterCount := 0
 	histogramCount := 0
@@ -777,7 +775,7 @@ func Test_ReflectPointers(t *testing.T) {
 		When   *time.Time `reveald:"histogram,interval=day"`
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(Optional{}))
+	features, _ := featureset.Reflect(reflect.TypeOf(Optional{}))
 
 	dynamicFilterCount := 0
 	boolFilterCount := 0
@@ -826,7 +824,7 @@ func Test_ReflectSlices(t *testing.T) {
 		Ratings    []float64 `reveald:"agg-size=30"`
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(Tagged{}))
+	features, sortOpts := featureset.Reflect(reflect.TypeOf(Tagged{}))
 
 	dynamicFilterCount := 0
 	for _, f := range features {
@@ -841,11 +839,8 @@ func Test_ReflectSlices(t *testing.T) {
 	}
 
 	// Verify sorting works for slices (check that Tags doesn't incorrectly get .keyword)
-	sortFeature := findSortingFeature(features)
-	if sortFeature == nil {
-		t.Fatal("expected a sorting feature")
-	}
-
+	// Create a SortingFeature to test the options
+	sortFeature := featureset.NewSortingFeature("sort", sortOpts...)
 	req := reveald.NewRequest()
 	builder := reveald.NewQueryBuilder(req, "test-index")
 
@@ -879,7 +874,7 @@ func Test_ReflectCombinedNewTypes(t *testing.T) {
 		Port     uint16
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(Complex{}))
+	features, _ := featureset.Reflect(reflect.TypeOf(Complex{}))
 
 	dynamicFilterCount := 0
 	histogramCount := 0
@@ -911,7 +906,7 @@ func Test_ReflectJsonTagSkip(t *testing.T) {
 		Regular  string `json:"regular" reveald:"dynamic"`
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(Data{}))
+	features, sortOpts := featureset.Reflect(reflect.TypeOf(Data{}))
 
 	// Should only have 2 dynamic filters (Title and Regular), Internal should be skipped
 	dynamicFilterCount := 0
@@ -926,7 +921,8 @@ func Test_ReflectJsonTagSkip(t *testing.T) {
 	}
 
 	// Verify sorting options don't include Internal field
-	sortFeature := features[len(features)-1].(*featureset.SortingFeature)
+	// Create a SortingFeature to test the options
+	sortFeature := featureset.NewSortingFeature("sort", sortOpts...)
 	req := reveald.NewRequest()
 	builder := reveald.NewQueryBuilder(req, "test-index")
 
@@ -954,10 +950,10 @@ func Test_ReflectJsonTagDash(t *testing.T) {
 		Normal    string `json:"normal" reveald:"dynamic"`
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(Data{}))
+	_, sortOpts := featureset.Reflect(reflect.TypeOf(Data{}))
 
-	// Get the sorting feature to check field paths
-	sortFeature := features[len(features)-1].(*featureset.SortingFeature)
+	// Create a SortingFeature to test the options
+	sortFeature := featureset.NewSortingFeature("sort", sortOpts...)
 	req := reveald.NewRequest()
 	builder := reveald.NewQueryBuilder(req, "test-index")
 
@@ -995,10 +991,10 @@ func Test_ReflectJsonTagOmitEmpty(t *testing.T) {
 		NoOptions   string `reveald:"dynamic"` // No json tag at all
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(Data{}))
+	_, sortOpts := featureset.Reflect(reflect.TypeOf(Data{}))
 
-	// Get the sorting feature to check field paths
-	sortFeature := features[len(features)-1].(*featureset.SortingFeature)
+	// Create a SortingFeature to test the options
+	sortFeature := featureset.NewSortingFeature("sort", sortOpts...)
 	req := reveald.NewRequest()
 	builder := reveald.NewQueryBuilder(req, "test-index")
 
@@ -1064,10 +1060,10 @@ func Test_ReflectEmbeddedStruct(t *testing.T) {
 		Value string `reveald:"dynamic"` // Shadows A.Value
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(B{}))
+	features, sortOpts := featureset.Reflect(reflect.TypeOf(B{}))
 
-	// Get the sorting feature to check field paths
-	sortFeature := features[len(features)-1].(*featureset.SortingFeature)
+	// Create a SortingFeature to test the options
+	sortFeature := featureset.NewSortingFeature("sort", sortOpts...)
 	req := reveald.NewRequest()
 	builder := reveald.NewQueryBuilder(req, "test-index")
 
@@ -1144,7 +1140,7 @@ func Test_ReflectSearchable(t *testing.T) {
 		Published   time.Time
 	}
 
-	features := featureset.Reflect(reflect.TypeOf(Article{}))
+	features, _ := featureset.Reflect(reflect.TypeOf(Article{}))
 
 	// Count dynamic filters and query filters
 	dynamicFilterCount := 0
@@ -1187,7 +1183,7 @@ func Test_ReflectWithCustomDefaults(t *testing.T) {
 	}
 
 	// Test with custom defaults
-	features := featureset.Reflect(
+	features, sortOpts := featureset.Reflect(
 		reflect.TypeOf(Product{}),
 		featureset.WithDefaultAggSize(50),
 		featureset.WithStringsDynamicByDefault(true),
@@ -1207,8 +1203,8 @@ func Test_ReflectWithCustomDefaults(t *testing.T) {
 		t.Errorf("expected 4 dynamic filters with stringsDynamicByDefault, got %d", dynamicFilterCount)
 	}
 
-	// Check sort suffixes
-	sortFeature := features[len(features)-1].(*featureset.SortingFeature)
+	// Create a SortingFeature to test the options
+	sortFeature := featureset.NewSortingFeature("sort", sortOpts...)
 	req := reveald.NewRequest()
 	builder := reveald.NewQueryBuilder(req, "test-index")
 
@@ -1248,16 +1244,14 @@ func Test_ReflectWithNoSortByDefault(t *testing.T) {
 		Age  int
 	}
 
-	features := featureset.Reflect(
+	_, sortOpts := featureset.Reflect(
 		reflect.TypeOf(Simple{}),
 		featureset.WithSortableByDefault(false),
 	)
 
-	// Should not have a sorting feature when sortable is disabled
-	for _, f := range features {
-		if _, ok := f.(*featureset.SortingFeature); ok {
-			t.Error("expected no SortingFeature when sortableByDefault is false")
-		}
+	// Should not have any sorting options when sortable is disabled
+	if len(sortOpts) != 0 {
+		t.Error("expected no sorting options when sortableByDefault is false")
 	}
 }
 
@@ -1267,7 +1261,7 @@ func Test_ReflectWithCustomSearchParam(t *testing.T) {
 		Body  string `reveald:"searchable"`
 	}
 
-	features := featureset.Reflect(
+	features, _ := featureset.Reflect(
 		reflect.TypeOf(Article{}),
 		featureset.WithSearchParamName("search"),
 	)
