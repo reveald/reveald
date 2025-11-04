@@ -46,6 +46,94 @@ func Test_NewStaticFilterFeature(t *testing.T) {
 				assert.Equal(t, "value", termQuery.Value)
 			},
 		},
+		{
+			name:    "missing property",
+			options: []StaticFilterOption{WithMissingProperty("property")},
+			check: func(t *testing.T, q *types.Query) {
+				assert.NotNil(t, q)
+				assert.NotNil(t, q.Bool)
+				assert.NotNil(t, q.Bool.Must)
+				assert.Len(t, q.Bool.Must, 1)
+				// Should have a bool query with must_not exists
+				innerBool := q.Bool.Must[0].Bool
+				assert.NotNil(t, innerBool)
+				assert.NotNil(t, innerBool.MustNot)
+				assert.Len(t, innerBool.MustNot, 1)
+				assert.NotNil(t, innerBool.MustNot[0].Exists)
+				assert.Equal(t, "property", innerBool.MustNot[0].Exists.Field)
+			},
+		},
+		{
+			name:    "exclude missing property",
+			options: []StaticFilterOption{WithExcludeMissingProperty("property")},
+			check: func(t *testing.T, q *types.Query) {
+				assert.NotNil(t, q)
+				assert.NotNil(t, q.Bool)
+				assert.NotNil(t, q.Bool.Must)
+				assert.Len(t, q.Bool.Must, 1)
+				assert.NotNil(t, q.Bool.Must[0].Exists)
+				assert.Equal(t, "property", q.Bool.Must[0].Exists.Field)
+			},
+		},
+		{
+			name: "multiple options - required value and exclude missing",
+			options: []StaticFilterOption{
+				WithRequiredValue("category", "electronics"),
+				WithExcludeMissingProperty("price"),
+			},
+			check: func(t *testing.T, q *types.Query) {
+				assert.NotNil(t, q)
+				assert.NotNil(t, q.Bool)
+				assert.NotNil(t, q.Bool.Must)
+				assert.Len(t, q.Bool.Must, 2)
+
+				// Check for term query
+				var foundTerm, foundExists bool
+				for _, mustClause := range q.Bool.Must {
+					if mustClause.Term != nil {
+						termQuery := mustClause.Term["category"]
+						assert.Equal(t, "electronics", termQuery.Value)
+						foundTerm = true
+					}
+					if mustClause.Exists != nil {
+						assert.Equal(t, "price", mustClause.Exists.Field)
+						foundExists = true
+					}
+				}
+				assert.True(t, foundTerm, "Should have term query")
+				assert.True(t, foundExists, "Should have exists query")
+			},
+		},
+		{
+			name: "multiple options - required property and missing property",
+			options: []StaticFilterOption{
+				WithRequiredProperty("active"),
+				WithMissingProperty("archived"),
+			},
+			check: func(t *testing.T, q *types.Query) {
+				assert.NotNil(t, q)
+				assert.NotNil(t, q.Bool)
+				assert.NotNil(t, q.Bool.Must)
+				assert.Len(t, q.Bool.Must, 2)
+
+				// Check for exists query on "active" and missing query on "archived"
+				var foundActive, foundArchivedMissing bool
+				for _, mustClause := range q.Bool.Must {
+					if mustClause.Exists != nil && mustClause.Exists.Field == "active" {
+						foundActive = true
+					}
+					if mustClause.Bool != nil && mustClause.Bool.MustNot != nil {
+						for _, mustNotClause := range mustClause.Bool.MustNot {
+							if mustNotClause.Exists != nil && mustNotClause.Exists.Field == "archived" {
+								foundArchivedMissing = true
+							}
+						}
+					}
+				}
+				assert.True(t, foundActive, "Should have exists query for active")
+				assert.True(t, foundArchivedMissing, "Should have missing query for archived")
+			},
+		},
 	}
 
 	for _, tt := range table {
@@ -66,6 +154,15 @@ func Test_StaticFilterFeature_Build(t *testing.T) {
 		{"no options", []StaticFilterOption{}},
 		{"required property", []StaticFilterOption{WithRequiredProperty("property")}},
 		{"required value", []StaticFilterOption{WithRequiredValue("property", "value")}},
+		{"missing property", []StaticFilterOption{WithMissingProperty("property")}},
+		{"exclude missing property", []StaticFilterOption{WithExcludeMissingProperty("property")}},
+		{
+			"multiple options",
+			[]StaticFilterOption{
+				WithRequiredValue("category", "electronics"),
+				WithExcludeMissingProperty("price"),
+			},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			sff := NewStaticFilterFeature(tt.options...)

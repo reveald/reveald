@@ -94,6 +94,60 @@ func (drhf *DateRangeHistogramFeature) Process(builder *reveald.QueryBuilder, ne
 }
 
 func (drhf *DateRangeHistogramFeature) build(builder *reveald.QueryBuilder) {
+	// Check for bucket key value parameter and apply filters
+	if builder.Request().Has(drhf.property) {
+		p, err := builder.Request().Get(drhf.property)
+		if err == nil && !p.IsRangeValue() { // NOT a .min/.max parameter
+			values := p.Values() // Get all bucket keys (e.g., ["60-90", "30-60"])
+
+			// Build should clauses for all selected buckets
+			shouldClauses := make([]types.Query, 0, len(values))
+
+			for _, bucketKey := range values {
+				// Find the matching DateRange by key
+				for _, r := range drhf.ranges {
+					if r.Key == bucketKey {
+						var dateRangeQuery types.DateRangeQuery
+
+						// Use FromStr as Gte (greater than or equal to)
+						if r.FromStr != "" {
+							dateRangeQuery.Gte = &r.FromStr
+						} else if r.From != nil {
+							fromStr := r.From.Format(time.RFC3339)
+							dateRangeQuery.Gte = &fromStr
+						}
+
+						// Use ToStr as Lt (less than) for exclusive upper bound
+						if r.ToStr != "" {
+							dateRangeQuery.Lt = &r.ToStr
+						} else if r.To != nil {
+							toStr := r.To.Format(time.RFC3339)
+							dateRangeQuery.Lt = &toStr
+						}
+
+						// Add to should clauses
+						shouldClauses = append(shouldClauses, types.Query{
+							Range: map[string]types.RangeQuery{
+								drhf.property: &dateRangeQuery,
+							},
+						})
+
+						break // Found this range, move to next value
+					}
+				}
+			}
+
+			if len(shouldClauses) > 0 {
+				boolQuery := types.Query{
+					Bool: &types.BoolQuery{
+						Should: shouldClauses,
+					},
+				}
+				builder.With(boolQuery)
+			}
+		}
+	}
+
 	// Create the date range aggregation directly with typed objects
 	field := drhf.property
 	format := drhf.format
@@ -126,18 +180,24 @@ func (drhf *DateRangeHistogramFeature) build(builder *reveald.QueryBuilder) {
 	}
 
 	// Create the date range aggregation
-	dateRangeAgg := types.Aggregations{
-		DateRange: &types.DateRangeAggregation{
-			Field:  &field,
-			Format: &format,
-			Keyed:  &keyed,
-			Ranges: dateRanges,
-		},
+	dateRangeAggregation := &types.DateRangeAggregation{
+		Field:  &field,
+		Keyed:  &keyed,
+		Ranges: dateRanges,
+	}
+
+	// Only set format if it's not empty
+	if format != "" {
+		dateRangeAggregation.Format = &format
 	}
 
 	// Add timezone if specified
 	if drhf.timezone != "" {
-		dateRangeAgg.DateRange.TimeZone = &drhf.timezone
+		dateRangeAggregation.TimeZone = &drhf.timezone
+	}
+
+	dateRangeAgg := types.Aggregations{
+		DateRange: dateRangeAggregation,
 	}
 
 	// If this is a nested field, wrap it in a nested aggregation
@@ -220,7 +280,7 @@ func (drhf *DateRangeHistogramFeature) processDateRangeBuckets(dateRange *types.
 		// Array format (non-keyed buckets)
 		for _, bucket := range buckets {
 			// Use the key if available, otherwise use a default representation
-			var keyValue interface{}
+			var keyValue any
 			if bucket.Key != nil {
 				keyValue = *bucket.Key
 			} else {

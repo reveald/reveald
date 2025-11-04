@@ -173,3 +173,94 @@ func WithRequiredValue(property string, value any) StaticFilterOption {
 		}
 	}
 }
+
+// WithMissingProperty adds a filter that requires the specified property to be missing or null.
+//
+// This matches documents where the field is:
+//   - Completely absent from the document
+//   - Present with a null value
+//   - An empty array []
+//   - An array containing only nulls [null]
+//
+// Note: Empty strings "" are NOT considered missing.
+//
+// Example:
+//
+//	// Create a static filter that only shows documents where "optional_field" is missing
+//	staticFilter := featureset.NewStaticFilterFeature(
+//	    featureset.WithMissingProperty("optional_field"),
+//	)
+func WithMissingProperty(property string) StaticFilterOption {
+	return func(sff *StaticFilterFeature) {
+		// Build the missing query (must_not exists covers both null and missing)
+		missingQuery := types.Query{
+			Bool: &types.BoolQuery{
+				MustNot: []types.Query{
+					{Exists: &types.ExistsQuery{Field: property}},
+				},
+			},
+		}
+
+		if sff.query == nil {
+			sff.query = &types.Query{
+				Bool: &types.BoolQuery{
+					Must: []types.Query{missingQuery},
+				},
+			}
+		} else {
+			if sff.query.Bool == nil {
+				sff.query.Bool = &types.BoolQuery{}
+			}
+			if sff.query.Bool.Must == nil {
+				sff.query.Bool.Must = []types.Query{missingQuery}
+			} else {
+				sff.query.Bool.Must = append(sff.query.Bool.Must, missingQuery)
+			}
+		}
+	}
+}
+
+// WithExcludeMissingProperty adds a filter that excludes documents where the property is missing or null.
+// This is equivalent to WithRequiredProperty but more explicit about the semantics.
+//
+// This excludes documents where the field is:
+//   - Completely absent from the document
+//   - Present with a null value
+//   - An empty array []
+//   - An array containing only nulls [null]
+//
+// Note: Empty strings "" are NOT considered missing and will NOT be excluded.
+//
+// Example:
+//
+//	// Create a static filter that excludes documents without an email
+//	staticFilter := featureset.NewStaticFilterFeature(
+//	    featureset.WithExcludeMissingProperty("email"),
+//	)
+func WithExcludeMissingProperty(property string) StaticFilterOption {
+	return func(sff *StaticFilterFeature) {
+		// Build the present query (exists query ensures field is present and non-null)
+		existsQuery := types.Query{
+			Exists: &types.ExistsQuery{
+				Field: property,
+			},
+		}
+
+		if sff.query == nil {
+			sff.query = &types.Query{
+				Bool: &types.BoolQuery{
+					Must: []types.Query{existsQuery},
+				},
+			}
+		} else {
+			if sff.query.Bool == nil {
+				sff.query.Bool = &types.BoolQuery{}
+			}
+			if sff.query.Bool.Must == nil {
+				sff.query.Bool.Must = []types.Query{existsQuery}
+			} else {
+				sff.query.Bool.Must = append(sff.query.Bool.Must, existsQuery)
+			}
+		}
+	}
+}
