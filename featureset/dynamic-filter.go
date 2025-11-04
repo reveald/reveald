@@ -49,11 +49,18 @@ func (dff *DynamicFilterFeature) build(builder *reveald.QueryBuilder) {
 		field := keyword
 		size := dff.agg.size
 
+		termsAgg := &types.TermsAggregation{
+			Field: &field,
+			Size:  &size,
+		}
+
+		// Use built-in Missing parameter if missingValue is configured
+		if dff.agg.missingValue != "" {
+			termsAgg.Missing = types.Missing(dff.agg.missingValue)
+		}
+
 		termAgg := types.Aggregations{
-			Terms: &types.TermsAggregation{
-				Field: &field,
-				Size:  &size,
-			},
+			Terms: termsAgg,
 		}
 
 		builder.Aggregation(dff.property, termAgg)
@@ -65,11 +72,18 @@ func (dff *DynamicFilterFeature) build(builder *reveald.QueryBuilder) {
 		field := keyword
 		size := dff.agg.size
 
+		innerTermsAgg := &types.TermsAggregation{
+			Field: &field,
+			Size:  &size,
+		}
+
+		// Use built-in Missing parameter if missingValue is configured
+		if dff.agg.missingValue != "" {
+			innerTermsAgg.Missing = types.Missing(dff.agg.missingValue)
+		}
+
 		termsAgg := types.Aggregations{
-			Terms: &types.TermsAggregation{
-				Field: &field,
-				Size:  &size,
-			},
+			Terms: innerTermsAgg,
 		}
 
 		// Create the nested aggregation
@@ -94,8 +108,8 @@ func (dff *DynamicFilterFeature) build(builder *reveald.QueryBuilder) {
 
 		if !dff.nested {
 			// Term query with 'should' clauses for non-nested fields
-			if len(p.Values()) == 1 {
-				// Single value - simple term query
+			if len(p.Values()) == 1 && (dff.agg.missingValue == "" || p.Values()[0] != dff.agg.missingValue) {
+				// Single value (not missing label) - simple term query
 				termQuery := types.Query{
 					Term: map[string]types.TermQuery{
 						keyword: {Value: p.Values()[0]},
@@ -104,24 +118,38 @@ func (dff *DynamicFilterFeature) build(builder *reveald.QueryBuilder) {
 
 				builder.With(termQuery)
 			} else {
-				// Multiple values - bool query with should clauses
+				// Multiple values or contains missing label - bool query with should clauses
 				shouldClauses := make([]types.Query, 0, len(p.Values()))
 				for _, v := range p.Values() {
-					termQuery := types.Query{
-						Term: map[string]types.TermQuery{
-							keyword: {Value: v},
+					if dff.agg.missingValue != "" && v == dff.agg.missingValue {
+						// Build missing filter query (must_not exists covers both null and missing)
+						missingQuery := types.Query{
+							Bool: &types.BoolQuery{
+								MustNot: []types.Query{
+									{Exists: &types.ExistsQuery{Field: keyword}},
+								},
+							},
+						}
+						shouldClauses = append(shouldClauses, missingQuery)
+					} else {
+						termQuery := types.Query{
+							Term: map[string]types.TermQuery{
+								keyword: {Value: v},
+							},
+						}
+						shouldClauses = append(shouldClauses, termQuery)
+					}
+				}
+
+				if len(shouldClauses) > 0 {
+					boolQuery := types.Query{
+						Bool: &types.BoolQuery{
+							Should: shouldClauses,
 						},
 					}
-					shouldClauses = append(shouldClauses, termQuery)
-				}
 
-				boolQuery := types.Query{
-					Bool: &types.BoolQuery{
-						Should: shouldClauses,
-					},
+					builder.With(boolQuery)
 				}
-
-				builder.With(boolQuery)
 			}
 		} else {
 			// Nested query for nested fields
@@ -130,28 +158,42 @@ func (dff *DynamicFilterFeature) build(builder *reveald.QueryBuilder) {
 			// Create should clauses for the nested query
 			shouldClauses := make([]types.Query, 0, len(p.Values()))
 			for _, v := range p.Values() {
-				termQuery := types.Query{
-					Term: map[string]types.TermQuery{
-						keyword: {Value: v},
+				if dff.agg.missingValue != "" && v == dff.agg.missingValue {
+					// Build missing filter query (must_not exists covers both null and missing)
+					missingQuery := types.Query{
+						Bool: &types.BoolQuery{
+							MustNot: []types.Query{
+								{Exists: &types.ExistsQuery{Field: keyword}},
+							},
+						},
+					}
+					shouldClauses = append(shouldClauses, missingQuery)
+				} else {
+					termQuery := types.Query{
+						Term: map[string]types.TermQuery{
+							keyword: {Value: v},
+						},
+					}
+					shouldClauses = append(shouldClauses, termQuery)
+				}
+			}
+
+			if len(shouldClauses) > 0 {
+				// Create the inner bool query
+				innerBoolQuery := types.BoolQuery{
+					Should: shouldClauses,
+				}
+
+				// Create the nested query with the inner bool query
+				nestedQuery := types.Query{
+					Nested: &types.NestedQuery{
+						Path:  path,
+						Query: types.Query{Bool: &innerBoolQuery},
 					},
 				}
-				shouldClauses = append(shouldClauses, termQuery)
-			}
 
-			// Create the inner bool query
-			innerBoolQuery := types.BoolQuery{
-				Should: shouldClauses,
+				builder.With(nestedQuery)
 			}
-
-			// Create the nested query with the inner bool query
-			nestedQuery := types.Query{
-				Nested: &types.NestedQuery{
-					Path:  path,
-					Query: types.Query{Bool: &innerBoolQuery},
-				},
-			}
-
-			builder.With(nestedQuery)
 		}
 	}
 }
@@ -162,6 +204,21 @@ func (dff *DynamicFilterFeature) handle(result *reveald.Result) (*reveald.Result
 		return result, nil
 	}
 
+	// Handle nested aggregations - extract inner terms from nested aggregate
+	if dff.nested {
+		nestedAgg, ok := agg.(*types.NestedAggregate)
+		if !ok {
+			return result, nil
+		}
+
+		innerAgg, ok := nestedAgg.Aggregations[dff.property]
+		if !ok {
+			return result, nil
+		}
+
+		agg = innerAgg
+	}
+
 	terms, ok := agg.(*types.StringTermsAggregate)
 	if !ok {
 		return result, nil
@@ -169,14 +226,7 @@ func (dff *DynamicFilterFeature) handle(result *reveald.Result) (*reveald.Result
 
 	buckets := terms.Buckets.([]types.StringTermsBucket)
 
-	// For nested aggregations, the buckets might need to be extracted from
-	// a different place in the aggregation response
-	if dff.nested && len(buckets) == 0 {
-		// In the case of nested aggregations, we might need to look into
-		// sub-aggregations. This depends on the specific shape of the response
-		// which might require additional handling
-	}
-
+	// Missing values are automatically included in buckets when Missing parameter is set
 	var resultBuckets []*reveald.ResultBucket
 	for _, bucket := range buckets {
 		resultBuckets = append(resultBuckets, &reveald.ResultBucket{

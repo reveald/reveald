@@ -59,11 +59,18 @@ func (bff *BooleanFilterFeature) build(builder *reveald.QueryBuilder) {
 		field := bff.property
 		size := bff.agg.size
 
+		termsAgg := &types.TermsAggregation{
+			Field: &field,
+			Size:  &size,
+		}
+
+		// Use built-in Missing parameter if missingValue is configured
+		if bff.agg.missingValue != "" {
+			termsAgg.Missing = types.Missing(bff.agg.missingValue)
+		}
+
 		termAgg := types.Aggregations{
-			Terms: &types.TermsAggregation{
-				Field: &field,
-				Size:  &size,
-			},
+			Terms: termsAgg,
 		}
 
 		builder.Aggregation(bff.property, termAgg)
@@ -75,11 +82,18 @@ func (bff *BooleanFilterFeature) build(builder *reveald.QueryBuilder) {
 		field := bff.property
 		size := bff.agg.size
 
+		innerTermsAgg := &types.TermsAggregation{
+			Field: &field,
+			Size:  &size,
+		}
+
+		// Use built-in Missing parameter if missingValue is configured
+		if bff.agg.missingValue != "" {
+			innerTermsAgg.Missing = types.Missing(bff.agg.missingValue)
+		}
+
 		termsAgg := types.Aggregations{
-			Terms: &types.TermsAggregation{
-				Field: &field,
-				Size:  &size,
-			},
+			Terms: innerTermsAgg,
 		}
 
 		// Create the nested aggregation
@@ -95,27 +109,52 @@ func (bff *BooleanFilterFeature) build(builder *reveald.QueryBuilder) {
 		builder.Aggregation(bff.property, nestedAgg)
 	}
 
-	// Add filtering if parameter is truthy
+	// Add filtering if parameter exists
 	param, err := builder.Request().Get(bff.property)
-	if err == nil && param.IsTruthy() {
-		// Create a term query for the boolean field
-		termQuery := types.Query{
-			Term: map[string]types.TermQuery{
-				bff.property: {Value: true},
-			},
-		}
-
-		if !bff.nested {
-			builder.With(termQuery)
-		} else {
-			// Wrap in nested query if needed
-			nestedQuery := types.Query{
-				Nested: &types.NestedQuery{
-					Path:  bff.nestedPath,
-					Query: termQuery,
+	if err == nil {
+		// Check if filtering by custom missing label
+		if bff.agg.missingValue != "" && param.Value() == bff.agg.missingValue {
+			// Build missing filter query
+			missingQuery := types.Query{
+				Bool: &types.BoolQuery{
+					MustNot: []types.Query{
+						{Exists: &types.ExistsQuery{Field: bff.property}},
+					},
 				},
 			}
-			builder.With(nestedQuery)
+
+			if !bff.nested {
+				builder.With(missingQuery)
+			} else {
+				// Wrap in nested query if needed
+				nestedQuery := types.Query{
+					Nested: &types.NestedQuery{
+						Path:  bff.nestedPath,
+						Query: missingQuery,
+					},
+				}
+				builder.With(nestedQuery)
+			}
+		} else if param.IsTruthy() {
+			// Create a term query for the boolean field (true)
+			termQuery := types.Query{
+				Term: map[string]types.TermQuery{
+					bff.property: {Value: true},
+				},
+			}
+
+			if !bff.nested {
+				builder.With(termQuery)
+			} else {
+				// Wrap in nested query if needed
+				nestedQuery := types.Query{
+					Nested: &types.NestedQuery{
+						Path:  bff.nestedPath,
+						Query: termQuery,
+					},
+				}
+				builder.With(nestedQuery)
+			}
 		}
 	}
 }
@@ -126,54 +165,39 @@ func (bff *BooleanFilterFeature) handle(result *reveald.Result) (*reveald.Result
 		return result, nil
 	}
 
-	if !bff.nested {
-		// Handle direct term aggregation for non-nested fields
-		terms, ok := agg.(*types.StringTermsAggregate)
+	// Handle nested aggregations - extract inner terms from nested aggregate
+	if bff.nested {
+		nestedAgg, ok := agg.(*types.NestedAggregate)
 		if !ok {
 			return result, nil
 		}
 
-		buckets := terms.Buckets.([]types.StringTermsBucket)
-
-		var resultBuckets []*reveald.ResultBucket
-		for _, bucket := range buckets {
-			resultBuckets = append(resultBuckets, &reveald.ResultBucket{
-				Value:    bucket.Key,
-				HitCount: bucket.DocCount,
-			})
-		}
-
-		result.Aggregations[bff.property] = resultBuckets
-	} else {
-		// Handle nested aggregation
-		nested, ok := agg.(*types.NestedAggregate)
+		innerAgg, ok := nestedAgg.Aggregations[bff.property]
 		if !ok {
 			return result, nil
 		}
 
-		// Extract the inner terms aggregation from the nested aggregation
-		innerAgg, ok := nested.Aggregations[bff.property]
-		if !ok {
-			return result, nil
-		}
-
-		terms, ok := innerAgg.(*types.StringTermsAggregate)
-		if !ok {
-			return result, nil
-		}
-
-		buckets := terms.Buckets.([]types.StringTermsBucket)
-
-		var resultBuckets []*reveald.ResultBucket
-		for _, bucket := range buckets {
-			resultBuckets = append(resultBuckets, &reveald.ResultBucket{
-				Value:    bucket.Key,
-				HitCount: bucket.DocCount,
-			})
-		}
-
-		result.Aggregations[bff.property] = resultBuckets
+		agg = innerAgg
 	}
+
+	// Handle direct term aggregation
+	terms, ok := agg.(*types.StringTermsAggregate)
+	if !ok {
+		return result, nil
+	}
+
+	buckets := terms.Buckets.([]types.StringTermsBucket)
+
+	// Missing values are automatically included in buckets when Missing parameter is set
+	var resultBuckets []*reveald.ResultBucket
+	for _, bucket := range buckets {
+		resultBuckets = append(resultBuckets, &reveald.ResultBucket{
+			Value:    bucket.Key,
+			HitCount: bucket.DocCount,
+		})
+	}
+
+	result.Aggregations[bff.property] = resultBuckets
 
 	return result, nil
 }
