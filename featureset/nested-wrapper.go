@@ -14,9 +14,9 @@ import (
 //
 // Example:
 //
-//	wrapper := featureset.NewNestedDocumentWrapper("carRelations",
-//	    featureset.NewDynamicFilterFeature("carRelations.car.model"),
-//	    featureset.NewDynamicFilterFeature("carRelations.car.color"),
+//	wrapper := featureset.NewNestedDocumentWrapper("items",
+//	    featureset.NewDynamicFilterFeature("items.category"),
+//	    featureset.NewDynamicFilterFeature("items.tags"),
 //	)
 //
 // This will generate nested queries and aggregations that properly handle
@@ -29,14 +29,14 @@ type NestedDocumentWrapper struct {
 
 // NewNestedDocumentWrapper creates a new nested document wrapper for the specified path.
 //
-// The path parameter should be the nested field path (e.g., "carRelations").
+// The path parameter should be the nested field path (e.g., "items").
 // The features parameter should be a list of features that operate on nested fields.
 //
 // Example:
 //
-//	wrapper := featureset.NewNestedDocumentWrapper("carRelations",
-//	    featureset.NewDynamicFilterFeature("carRelations.car.model"),
-//	    featureset.NewDynamicFilterFeature("carRelations.car.color"),
+//	wrapper := featureset.NewNestedDocumentWrapper("items",
+//	    featureset.NewDynamicFilterFeature("items.category"),
+//	    featureset.NewDynamicFilterFeature("items.tags"),
 //	)
 func NewNestedDocumentWrapper(path string, features ...reveald.Feature) *NestedDocumentWrapper {
 	return &NestedDocumentWrapper{
@@ -46,16 +46,59 @@ func NewNestedDocumentWrapper(path string, features ...reveald.Feature) *NestedD
 	}
 }
 
-// Disjunctive enables disjunctive mode for the nested wrapper.
+// Disjunctive enables disjunctive (OR) mode for faceted search aggregations.
 //
-// In disjunctive mode, each facet is filtered independently from others,
-// allowing users to see all options for each facet even when other facets are filtered.
+// # Understanding Conjunctive vs Disjunctive Filtering
+//
+// Conjunctive Mode (default, Disjunctive=false):
+//   - Hit queries: All filters combined with AND logic
+//   - Aggregations: Each aggregation filtered by ALL active filters (including its own)
+//   - Result: As you select more options, available choices narrow down progressively
+//   - Use case: When you want to drill down and find items matching ALL selected criteria
+//
+// Disjunctive Mode (Disjunctive=true):
+//   - Hit queries: All filters still combined with AND logic (for accurate results)
+//   - Aggregations: Each facet's aggregation excludes its own filter but includes others
+//   - Result: You can always see all available options for each facet independently
+//   - Use case: When you want users to explore different combinations without losing visibility
+//
+// # Example Scenario
+//
+// Given nested items with category and tags fields, suppose the data contains:
+//   - Item A: category="Electronics", tags="New"
+//   - Item B: category="Electronics", tags="Sale"
+//   - Item C: category="Books", tags="New"
+//
+// User selects: category="Electronics" AND tags="New"
+//
+// Conjunctive Mode Output:
+//
+//	Hits: [Item A] (only items matching both filters)
+//	Category aggregation: {Electronics: 1}     // Only shows categories for filtered items
+//	Tags aggregation: {New: 1}                 // Only shows tags for filtered items
+//
+// Disjunctive Mode Output:
+//
+//	Hits: [Item A] (only items matching both filters)
+//	Category aggregation: {Electronics: 2, Books: 1}  // Shows all categories (tags filter excluded)
+//	Tags aggregation: {New: 2, Sale: 1}              // Shows all tags (category filter excluded)
+//
+// The key difference: In disjunctive mode, users can see what OTHER options are available
+// for each facet, even when filters are active. This prevents "dead ends" where applying
+// too many filters results in empty aggregation buckets.
 //
 // Example:
 //
-//	wrapper := featureset.NewNestedDocumentWrapper("carRelations",
-//	    featureset.NewDynamicFilterFeature("carRelations.car.model"),
-//	    featureset.NewDynamicFilterFeature("carRelations.car.color"),
+//	// Conjunctive mode (default) - narrow down progressively
+//	wrapper := featureset.NewNestedDocumentWrapper("items",
+//	    featureset.NewDynamicFilterFeature("items.category"),
+//	    featureset.NewDynamicFilterFeature("items.tags"),
+//	)
+//
+//	// Disjunctive mode - explore freely
+//	wrapper := featureset.NewNestedDocumentWrapper("items",
+//	    featureset.NewDynamicFilterFeature("items.category"),
+//	    featureset.NewDynamicFilterFeature("items.tags"),
 //	).Disjunctive(true)
 func (ndw *NestedDocumentWrapper) Disjunctive(enable bool) *NestedDocumentWrapper {
 	ndw.disjunctive = enable

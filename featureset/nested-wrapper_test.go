@@ -14,47 +14,47 @@ import (
 
 func TestNewNestedDocumentWrapper(t *testing.T) {
 	t.Run("with single feature", func(t *testing.T) {
-		feature := NewDynamicFilterFeature("carRelations.car.model")
-		wrapper := NewNestedDocumentWrapper("carRelations", feature)
+		feature := NewDynamicFilterFeature("items.category")
+		wrapper := NewNestedDocumentWrapper("items", feature)
 
-		assert.Equal(t, "carRelations", wrapper.path)
+		assert.Equal(t, "items", wrapper.path)
 		assert.Len(t, wrapper.features, 1)
 		assert.False(t, wrapper.disjunctive)
 	})
 
 	t.Run("with multiple features", func(t *testing.T) {
-		feature1 := NewDynamicFilterFeature("carRelations.car.model")
-		feature2 := NewDynamicFilterFeature("carRelations.car.color")
-		feature3 := NewHistogramFeature("carRelations.price")
+		feature1 := NewDynamicFilterFeature("items.category")
+		feature2 := NewDynamicFilterFeature("items.tags")
+		feature3 := NewHistogramFeature("items.price")
 
-		wrapper := NewNestedDocumentWrapper("carRelations", feature1, feature2, feature3)
+		wrapper := NewNestedDocumentWrapper("items", feature1, feature2, feature3)
 
-		assert.Equal(t, "carRelations", wrapper.path)
+		assert.Equal(t, "items", wrapper.path)
 		assert.Len(t, wrapper.features, 3)
 		assert.False(t, wrapper.disjunctive)
 	})
 
 	t.Run("with disjunctive mode", func(t *testing.T) {
-		feature := NewDynamicFilterFeature("carRelations.car.model")
-		wrapper := NewNestedDocumentWrapper("carRelations", feature).Disjunctive(true)
+		feature := NewDynamicFilterFeature("items.category")
+		wrapper := NewNestedDocumentWrapper("items", feature).Disjunctive(true)
 
 		assert.True(t, wrapper.disjunctive)
 	})
 }
 
 func TestNestedDocumentWrapper_Property(t *testing.T) {
-	wrapper := NewNestedDocumentWrapper("carRelations",
-		NewDynamicFilterFeature("carRelations.car.model"),
+	wrapper := NewNestedDocumentWrapper("items",
+		NewDynamicFilterFeature("items.category"),
 	)
 
-	assert.Equal(t, "carRelations", wrapper.Property())
+	assert.Equal(t, "items", wrapper.Property())
 }
 
 func TestNestedDocumentWrapper_Features(t *testing.T) {
-	feature1 := NewDynamicFilterFeature("carRelations.car.model")
-	feature2 := NewDynamicFilterFeature("carRelations.car.color")
+	feature1 := NewDynamicFilterFeature("items.category")
+	feature2 := NewDynamicFilterFeature("items.tags")
 
-	wrapper := NewNestedDocumentWrapper("carRelations", feature1, feature2)
+	wrapper := NewNestedDocumentWrapper("items", feature1, feature2)
 	features := wrapper.Features()
 
 	assert.Len(t, features, 2)
@@ -64,14 +64,14 @@ func TestNestedDocumentWrapper_Features(t *testing.T) {
 
 func TestNestedDocumentWrapper_QueryBuilding(t *testing.T) {
 	t.Run("builds nested query with dynamic filters", func(t *testing.T) {
-		wrapper := NewNestedDocumentWrapper("carRelations",
-			NewDynamicFilterFeature("carRelations.car.model"),
-			NewDynamicFilterFeature("carRelations.car.color"),
+		wrapper := NewNestedDocumentWrapper("items",
+			NewDynamicFilterFeature("items.category"),
+			NewDynamicFilterFeature("items.tags"),
 		)
 
 		req := reveald.NewRequest()
-		req.Set("carRelations.car.model", "V60", "XC60")
-		req.Set("carRelations.car.color", "Glacier Silver", "Black Stone")
+		req.Set("items.category", "Widget", "Gadget")
+		req.Set("items.tags", "Electronics", "Books")
 
 		builder := reveald.NewQueryBuilder(req, "test-index")
 
@@ -94,13 +94,13 @@ func TestNestedDocumentWrapper_QueryBuilding(t *testing.T) {
 	})
 
 	t.Run("builds nested aggregations with dynamic filters", func(t *testing.T) {
-		wrapper := NewNestedDocumentWrapper("carRelations",
-			NewDynamicFilterFeature("carRelations.car.model"),
-			NewDynamicFilterFeature("carRelations.car.color"),
+		wrapper := NewNestedDocumentWrapper("items",
+			NewDynamicFilterFeature("items.category"),
+			NewDynamicFilterFeature("items.tags"),
 		)
 
 		req := reveald.NewRequest()
-		req.Set("carRelations.car.model", "V60")
+		req.Set("items.category", "Widget")
 
 		builder := reveald.NewQueryBuilder(req, "test-index")
 		wrapper.buildNestedAggregations(builder)
@@ -109,8 +109,8 @@ func TestNestedDocumentWrapper_QueryBuilding(t *testing.T) {
 
 		// Verify aggregations were generated
 		assert.NotNil(t, esReq.Aggregations)
-		assert.Contains(t, esReq.Aggregations, "carRelations.car.model")
-		assert.Contains(t, esReq.Aggregations, "carRelations.car.color")
+		assert.Contains(t, esReq.Aggregations, "items.category")
+		assert.Contains(t, esReq.Aggregations, "items.tags")
 
 		// Log the aggregations for inspection
 		aggsJSON, _ := json.MarshalIndent(esReq.Aggregations, "", "  ")
@@ -118,13 +118,13 @@ func TestNestedDocumentWrapper_QueryBuilding(t *testing.T) {
 	})
 
 	t.Run("builds nested histogram aggregation", func(t *testing.T) {
-		wrapper := NewNestedDocumentWrapper("carRelations",
-			NewHistogramFeature("carRelations.price", WithInterval(5000)),
+		wrapper := NewNestedDocumentWrapper("items",
+			NewHistogramFeature("items.price", WithInterval(5000)),
 		)
 
 		req := reveald.NewRequest()
-		req.Set("carRelations.price.min", "10000")
-		req.Set("carRelations.price.max", "50000")
+		req.Set("items.price.min", "10000")
+		req.Set("items.price.max", "50000")
 
 		builder := reveald.NewQueryBuilder(req, "test-index")
 		wrapper.buildNestedQueryFilter(builder)
@@ -135,7 +135,7 @@ func TestNestedDocumentWrapper_QueryBuilding(t *testing.T) {
 		// Verify query and aggregations
 		assert.NotNil(t, esReq.Query)
 		assert.NotNil(t, esReq.Aggregations)
-		assert.Contains(t, esReq.Aggregations, "carRelations.price")
+		assert.Contains(t, esReq.Aggregations, "items.price")
 
 		queryJSON, _ := json.MarshalIndent(esReq.Query, "", "  ")
 		aggsJSON, _ := json.MarshalIndent(esReq.Aggregations, "", "  ")
@@ -144,15 +144,15 @@ func TestNestedDocumentWrapper_QueryBuilding(t *testing.T) {
 	})
 
 	t.Run("builds nested date histogram aggregation", func(t *testing.T) {
-		wrapper := NewNestedDocumentWrapper("carRelations",
-			NewDateHistogramFeature("carRelations.purchaseDate", Month,
+		wrapper := NewNestedDocumentWrapper("items",
+			NewDateHistogramFeature("items.createdAt", Month,
 				WithDateFormat("yyyy-MM-dd"),
 			),
 		)
 
 		req := reveald.NewRequest()
-		req.Set("carRelations.purchaseDate.min", "2023-01-01")
-		req.Set("carRelations.purchaseDate.max", "2023-12-31")
+		req.Set("items.createdAt.min", "2023-01-01")
+		req.Set("items.createdAt.max", "2023-12-31")
 
 		builder := reveald.NewQueryBuilder(req, "test-index")
 		wrapper.buildNestedQueryFilter(builder)
@@ -163,7 +163,7 @@ func TestNestedDocumentWrapper_QueryBuilding(t *testing.T) {
 		// Verify query and aggregations
 		assert.NotNil(t, esReq.Query)
 		assert.NotNil(t, esReq.Aggregations)
-		assert.Contains(t, esReq.Aggregations, "carRelations.purchaseDate")
+		assert.Contains(t, esReq.Aggregations, "items.createdAt")
 
 		queryJSON, _ := json.MarshalIndent(esReq.Query, "", "  ")
 		aggsJSON, _ := json.MarshalIndent(esReq.Aggregations, "", "  ")
@@ -172,20 +172,20 @@ func TestNestedDocumentWrapper_QueryBuilding(t *testing.T) {
 	})
 
 	t.Run("builds mixed feature types", func(t *testing.T) {
-		wrapper := NewNestedDocumentWrapper("carRelations",
-			NewDynamicFilterFeature("carRelations.car.model"),
-			NewDynamicFilterFeature("carRelations.car.color"),
-			NewHistogramFeature("carRelations.price", WithInterval(5000)),
-			NewDateHistogramFeature("carRelations.purchaseDate", Month),
+		wrapper := NewNestedDocumentWrapper("items",
+			NewDynamicFilterFeature("items.category"),
+			NewDynamicFilterFeature("items.tags"),
+			NewHistogramFeature("items.price", WithInterval(5000)),
+			NewDateHistogramFeature("items.createdAt", Month),
 		)
 
 		req := reveald.NewRequest()
-		req.Set("carRelations.car.model", "V60", "XC60")
-		req.Set("carRelations.car.color", "Glacier Silver")
-		req.Set("carRelations.price.min", "20000")
-		req.Set("carRelations.price.max", "60000")
-		req.Set("carRelations.purchaseDate.min", "2023-01-01")
-		req.Set("carRelations.purchaseDate.max", "2023-12-31")
+		req.Set("items.category", "Widget", "Gadget")
+		req.Set("items.tags", "Electronics")
+		req.Set("items.price.min", "20000")
+		req.Set("items.price.max", "60000")
+		req.Set("items.createdAt.min", "2023-01-01")
+		req.Set("items.createdAt.max", "2023-12-31")
 
 		builder := reveald.NewQueryBuilder(req, "test-index")
 		wrapper.buildNestedQueryFilter(builder)
@@ -196,10 +196,10 @@ func TestNestedDocumentWrapper_QueryBuilding(t *testing.T) {
 		// Verify all aggregations were created
 		assert.NotNil(t, esReq.Query)
 		assert.NotNil(t, esReq.Aggregations)
-		assert.Contains(t, esReq.Aggregations, "carRelations.car.model")
-		assert.Contains(t, esReq.Aggregations, "carRelations.car.color")
-		assert.Contains(t, esReq.Aggregations, "carRelations.price")
-		assert.Contains(t, esReq.Aggregations, "carRelations.purchaseDate")
+		assert.Contains(t, esReq.Aggregations, "items.category")
+		assert.Contains(t, esReq.Aggregations, "items.tags")
+		assert.Contains(t, esReq.Aggregations, "items.price")
+		assert.Contains(t, esReq.Aggregations, "items.createdAt")
 
 		queryJSON, _ := json.MarshalIndent(esReq.Query, "", "  ")
 		aggsJSON, _ := json.MarshalIndent(esReq.Aggregations, "", "  ")
@@ -208,14 +208,14 @@ func TestNestedDocumentWrapper_QueryBuilding(t *testing.T) {
 	})
 
 	t.Run("disjunctive mode filters differently", func(t *testing.T) {
-		wrapper := NewNestedDocumentWrapper("carRelations",
-			NewDynamicFilterFeature("carRelations.car.model"),
-			NewDynamicFilterFeature("carRelations.car.color"),
+		wrapper := NewNestedDocumentWrapper("items",
+			NewDynamicFilterFeature("items.category"),
+			NewDynamicFilterFeature("items.tags"),
 		).Disjunctive(true)
 
 		req := reveald.NewRequest()
-		req.Set("carRelations.car.model", "V60")
-		req.Set("carRelations.car.color", "Glacier Silver")
+		req.Set("items.category", "Widget")
+		req.Set("items.tags", "Electronics")
 
 		builder := reveald.NewQueryBuilder(req, "test-index")
 		wrapper.buildNestedAggregations(builder)
@@ -224,23 +224,23 @@ func TestNestedDocumentWrapper_QueryBuilding(t *testing.T) {
 
 		// In disjunctive mode, aggregations should still be created
 		assert.NotNil(t, esReq.Aggregations)
-		assert.Contains(t, esReq.Aggregations, "carRelations.car.model")
-		assert.Contains(t, esReq.Aggregations, "carRelations.car.color")
+		assert.Contains(t, esReq.Aggregations, "items.category")
+		assert.Contains(t, esReq.Aggregations, "items.tags")
 
 		aggsJSON, _ := json.MarshalIndent(esReq.Aggregations, "", "  ")
 		t.Logf("Generated aggregations (disjunctive):\n%s", aggsJSON)
 	})
 
 	t.Run("handles missing values", func(t *testing.T) {
-		wrapper := NewNestedDocumentWrapper("carRelations",
-			NewDynamicFilterFeature("carRelations.car.model",
+		wrapper := NewNestedDocumentWrapper("items",
+			NewDynamicFilterFeature("items.category",
 				WithAggregationSize(50),
 				WithMissingValueAs("(No model)"),
 			),
 		)
 
 		req := reveald.NewRequest()
-		req.Set("carRelations.car.model", "V60", "(No model)")
+		req.Set("items.category", "Widget", "(No model)")
 
 		builder := reveald.NewQueryBuilder(req, "test-index")
 		wrapper.buildNestedQueryFilter(builder)
@@ -258,9 +258,9 @@ func TestNestedDocumentWrapper_QueryBuilding(t *testing.T) {
 	})
 
 	t.Run("handles no filters", func(t *testing.T) {
-		wrapper := NewNestedDocumentWrapper("carRelations",
-			NewDynamicFilterFeature("carRelations.car.model"),
-			NewDynamicFilterFeature("carRelations.car.color"),
+		wrapper := NewNestedDocumentWrapper("items",
+			NewDynamicFilterFeature("items.category"),
+			NewDynamicFilterFeature("items.tags"),
 		)
 
 		req := reveald.NewRequest()
@@ -274,8 +274,8 @@ func TestNestedDocumentWrapper_QueryBuilding(t *testing.T) {
 
 		// Should still have aggregations, but query might be empty or minimal
 		assert.NotNil(t, esReq.Aggregations)
-		assert.Contains(t, esReq.Aggregations, "carRelations.car.model")
-		assert.Contains(t, esReq.Aggregations, "carRelations.car.color")
+		assert.Contains(t, esReq.Aggregations, "items.category")
+		assert.Contains(t, esReq.Aggregations, "items.tags")
 
 		aggsJSON, _ := json.MarshalIndent(esReq.Aggregations, "", "  ")
 		t.Logf("Generated aggregations (no filters):\n%s", aggsJSON)
