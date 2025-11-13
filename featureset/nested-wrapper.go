@@ -1,7 +1,6 @@
 package featureset
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
@@ -112,13 +111,6 @@ func (ndw *NestedDocumentWrapper) Process(builder *reveald.QueryBuilder, next re
 	innerQueryBuilder := reveald.NewQueryBuilder(builder.Request(), builder.Indices()...)
 	for _, feature := range ndw.features {
 		_, err := feature.Process(innerQueryBuilder, func(b *reveald.QueryBuilder) (*reveald.Result, error) {
-
-			// return nil here to continue the chain
-			// we only do this to build up the inner query/aggregations
-			// then we will wrap them in nested structures
-			// and then we will run them again and feed them with their data
-			fmt.Println(b)
-
 			return nil, nil
 		})
 		if err != nil {
@@ -170,20 +162,19 @@ func (ndw *NestedDocumentWrapper) wrapAndApplyToMainBuilder(builtReq *search.Req
 
 // handleAggregations unwraps nested aggregation results for sub-features only
 func (ndw *NestedDocumentWrapper) handleAggregations(res *reveald.Result) (*reveald.Result, error) {
-	// Get the property names that this wrapper is responsible for
-	wrappedProperties := ndw.getWrappedPropertyNames()
-
-	// Unwrap only the aggregations that belong to our nested features
 	rawAggs := res.RawAggregations()
 	unwrappedAggs := make(map[string]types.Aggregate)
 
-	// Copy all aggregations, but unwrap the ones we're responsible for
+	// Copy all aggregations, but unwrap the ones that belong to our nested path
 	for aggName, rawAgg := range rawAggs {
-		if wrappedProperties[aggName] {
-			// This is one of our nested aggregations - unwrap it
+		if ndw.isOurAggregation(aggName) {
+			// This aggregation belongs to our nested path - unwrap it
 			innerAgg := ndw.unwrapNestedAggregation(aggName, rawAggs)
 			if innerAgg != nil {
 				unwrappedAggs[aggName] = innerAgg
+			} else {
+				// Unwrapping failed, keep original
+				unwrappedAggs[aggName] = rawAgg
 			}
 		} else {
 			// Not our aggregation - leave it unchanged
@@ -212,28 +203,11 @@ func (ndw *NestedDocumentWrapper) handleAggregations(res *reveald.Result) (*reve
 	return currentResult, nil
 }
 
-// getWrappedPropertyNames returns a set of property names this wrapper manages
-func (ndw *NestedDocumentWrapper) getWrappedPropertyNames() map[string]bool {
-	properties := make(map[string]bool)
-
-	for _, feature := range ndw.features {
-		var propertyName string
-
-		switch f := feature.(type) {
-		case *DynamicFilterFeature:
-			propertyName = f.property
-		case *HistogramFeature:
-			propertyName = f.property
-		case *DateHistogramFeature:
-			propertyName = f.property
-		}
-
-		if propertyName != "" {
-			properties[propertyName] = true
-		}
-	}
-
-	return properties
+// isOurAggregation checks if an aggregation name belongs to this nested wrapper
+func (ndw *NestedDocumentWrapper) isOurAggregation(aggName string) bool {
+	// Check if the aggregation name starts with our nested path
+	// e.g., "reviews.author" starts with "reviews"
+	return strings.HasPrefix(aggName, ndw.path+".")
 }
 
 // unwrapNestedAggregation extracts inner aggregation from: nested -> filter -> innerAgg
@@ -267,66 +241,6 @@ func (ndw *NestedDocumentWrapper) unwrapNestedAggregation(aggName string, rawAgg
 	}
 
 	return innerAgg
-}
-
-// unwrapSingleAggregation extracts the inner aggregation from: nested -> filter -> innerAgg
-func (ndw *NestedDocumentWrapper) unwrapSingleAggregation(aggName string, rawAgg types.Aggregate) types.Aggregate {
-	// Step 1: Unwrap nested aggregation
-	nestedAgg, ok := rawAgg.(*types.NestedAggregate)
-	if !ok || nestedAgg == nil {
-		return nil
-	}
-
-	// Step 2: Get the filter aggregation
-	filterNode, ok := nestedAgg.Aggregations[aggName+"._filter"]
-	if !ok || filterNode == nil {
-		return nil
-	}
-
-	filterAgg, ok := filterNode.(*types.FilterAggregate)
-	if !ok || filterAgg == nil {
-		return nil
-	}
-
-	// Step 3: Get the actual inner aggregation
-	innerAgg, ok := filterAgg.Aggregations[aggName]
-	if !ok || innerAgg == nil {
-		return nil
-	}
-
-	// Return the unwrapped aggregation
-	return innerAgg
-}
-
-// buildFilterMustClauses builds the filter must clauses for conjunctive or disjunctive mode.
-func (ndw *NestedDocumentWrapper) buildFilterMustClauses(
-	property string,
-	allClauses []types.Query,
-	perProperty map[string]*types.Query,
-) []types.Query {
-	if ndw.disjunctive {
-		// Disjunctive: exclude this property's filter
-		filterMust := make([]types.Query, 0, len(allClauses))
-		for prop, clause := range perProperty {
-			if prop != property && clause != nil {
-				filterMust = append(filterMust, *clause)
-			}
-		}
-		return filterMust
-	}
-
-	// Conjunctive: include all filters
-	return append([]types.Query{}, allClauses...)
-}
-
-// Property returns the nested path for this wrapper.
-func (ndw *NestedDocumentWrapper) Property() string {
-	return ndw.path
-}
-
-// Features returns the child features wrapped by this wrapper.
-func (ndw *NestedDocumentWrapper) Features() []reveald.Feature {
-	return ndw.features
 }
 
 // buildFilterClausesForAgg determines which filter clauses to apply for a given aggregation.

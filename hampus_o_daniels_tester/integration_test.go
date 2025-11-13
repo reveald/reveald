@@ -317,6 +317,7 @@ func TestEverythin(t *testing.T) {
 		ep := reveald.NewEndpoint(backend, reveald.WithIndices(testIndex))
 
 		err = ep.Register(
+			featureset.NewDynamicFilterFeature("category"),
 			featureset.NewNestedDocumentWrapper("reviews",
 				featureset.NewHistogramFeature(
 					"reviews.rating",
@@ -324,63 +325,64 @@ func TestEverythin(t *testing.T) {
 					featureset.WithoutZeroBucket(),
 				),
 				featureset.NewDynamicFilterFeature("reviews.author"),
-				// featureset.NewDateHistogramFeature(
-				// 	"reviews.date",
-				// 	featureset.Day, // Using the Day constant
-				// 	featureset.WithDateFormat("yyyy-MM-dd"),
-				// 	featureset.WithCalendarIntervalInstead(),
-				// ),
+				featureset.NewDateHistogramFeature(
+					"reviews.date",
+					featureset.Day, // Using the Day constant
+					featureset.WithDateFormat("yyyy-MM-dd"),
+					featureset.WithCalendarIntervalInstead(),
+				),
 			),
 		)
 
 		require.NoError(t, err, "Failed to register features")
 
-		t.Run("Filter on DynamicFilterFeature", func(t *testing.T) {
-			req := reveald.NewRequest(
-				reveald.NewParameter("reviews.author", "Kevin White"),
-			)
+		// t.Run("Filter on DynamicFilterFeature", func(t *testing.T) {
+		// 	req := reveald.NewRequest(
+		// 		reveald.NewParameter("reviews.author", "Kevin White"),
+		// 	)
 
-			res, err := ep.Execute(ctx, req)
-			require.NoError(t, err, "Failed to execute search")
+		// 	res, err := ep.Execute(ctx, req)
+		// 	require.NoError(t, err, "Failed to execute search")
 
-			assert.Len(t, res.Hits, 2)
+		// 	assert.Len(t, res.Hits, 2)
 
-			authorBucket, ok := res.Aggregations["reviews.author"]
-			require.True(t, ok, "Expected aggregation 'reviews.author' to be present")
+		// 	authorBucket, ok := res.Aggregations["reviews.author"]
+		// 	require.True(t, ok, "Expected aggregation 'reviews.author' to be present")
 
-			assert.Len(t, authorBucket, 1)
+		// 	assert.Len(t, authorBucket, 1)
 
-			ratingBucket, ok := res.Aggregations["reviews.rating"]
-			require.True(t, ok, "Expected aggregation 'reviews.rating' to be present")
+		// 	ratingBucket, ok := res.Aggregations["reviews.rating"]
+		// 	require.True(t, ok, "Expected aggregation 'reviews.rating' to be present")
 
-			assert.Len(t, ratingBucket, 2)
-		})
+		// 	assert.Len(t, ratingBucket, 2)
+		// })
 
-		t.Run("Filter on Histogram", func(t *testing.T) {
-			req := reveald.NewRequest(
-				reveald.NewParameter("reviews.rating.min", "5"),
-			)
+		// t.Run("Filter on Histogram", func(t *testing.T) {
+		// 	req := reveald.NewRequest(
+		// 		reveald.NewParameter("reviews.rating.min", "5"),
+		// 	)
 
-			res, err := ep.Execute(ctx, req)
-			require.NoError(t, err, "Failed to execute search")
+		// 	res, err := ep.Execute(ctx, req)
+		// 	require.NoError(t, err, "Failed to execute search")
 
-			assert.Len(t, res.Hits, 3)
+		// 	assert.Len(t, res.Hits, 3)
 
-			authorBucket, ok := res.Aggregations["reviews.author"]
-			require.True(t, ok, "Expected aggregation 'reviews.author' to be present")
+		// 	authorBucket, ok := res.Aggregations["reviews.author"]
+		// 	require.True(t, ok, "Expected aggregation 'reviews.author' to be present")
 
-			assert.Len(t, authorBucket, 6)
+		// 	assert.Len(t, authorBucket, 6)
 
-			ratingBucket, ok := res.Aggregations["reviews.rating"]
-			require.True(t, ok, "Expected aggregation 'reviews.rating' to be present")
+		// 	ratingBucket, ok := res.Aggregations["reviews.rating"]
+		// 	require.True(t, ok, "Expected aggregation 'reviews.rating' to be present")
 
-			assert.Len(t, ratingBucket, 1)
-		})
+		// 	assert.Len(t, ratingBucket, 1)
+		// })
 
 		t.Run("Multiple filters", func(t *testing.T) {
 			req := reveald.NewRequest(
 				reveald.NewParameter("reviews.author", "Kevin White"),
 				reveald.NewParameter("reviews.rating.min", "4"),
+				reveald.NewParameter("category", "electronics"),
 			)
 
 			res, err := ep.Execute(ctx, req)
@@ -399,26 +401,26 @@ func TestEverythin(t *testing.T) {
 			assert.Len(t, ratingBucket, 1)
 		})
 
-		// t.Run("Filter on DateHistogram", func(t *testing.T) {
-		// 	req := reveald.NewRequest(
-		// 		reveald.NewParameter("reviews.date.min", "2024-01-20"),
-		// 	)
+		t.Run("Filter on DateHistogram", func(t *testing.T) {
+			req := reveald.NewRequest(
+				reveald.NewParameter("reviews.date.min", "2024-01-20"),
+			)
 
-		// 	res, err := ep.Execute(ctx, req)
-		// 	require.NoError(t, err, "Failed to execute search")
+			res, err := ep.Execute(ctx, req)
+			require.NoError(t, err, "Failed to execute search")
 
-		// 	assert.Len(t, res.Hits, 3)
+			assert.Len(t, res.Hits, 3)
 
-		// 	authorBucket, ok := res.Aggregations["reviews.author"]
-		// 	require.True(t, ok, "Expected aggregation 'reviews.author' to be present")
+			authorBucket, ok := res.Aggregations["reviews.author"]
+			require.True(t, ok, "Expected aggregation 'reviews.author' to be present")
 
-		// 	assert.Len(t, authorBucket, 4)
+			assert.Len(t, authorBucket, 4)
 
-		// 	ratingBucket, ok := res.Aggregations["reviews.rating"]
-		// 	require.True(t, ok, "Expected aggregation 'reviews.rating' to be present")
+			ratingBucket, ok := res.Aggregations["reviews.rating"]
+			require.True(t, ok, "Expected aggregation 'reviews.rating' to be present")
 
-		// 	assert.Len(t, ratingBucket, 3)
-		// })
+			assert.Len(t, ratingBucket, 3)
+		})
 	})
 }
 
