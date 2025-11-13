@@ -63,10 +63,13 @@ func createElasticsearchClient(esURL string) (*elasticsearch.TypedClient, error)
 func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 	ctx := context.Background()
 
-	propertiesProp := types.NewNestedProperty()
-	propertiesProp.Properties = map[string]types.Property{
-		"color":    withKeywordProperty(types.NewKeywordProperty()),
-		"warranty": withKeywordProperty(types.NewTextProperty()),
+	reviewsProps := types.NewNestedProperty()
+	reviewsProps.Properties = map[string]types.Property{
+		"author":   withKeywordProperty(types.NewKeywordProperty()),
+		"rating":   types.NewIntegerNumberProperty(),
+		"comment":  withKeywordProperty(types.NewTextProperty()),
+		"date":     types.NewDateProperty(),
+		"verified": types.NewBooleanProperty(),
 	}
 
 	// Create mapping for test index
@@ -79,7 +82,7 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      types.NewBooleanProperty(),
 			"category":    withKeywordProperty(types.NewKeywordProperty()),
 			"rating":      types.NewIntegerNumberProperty(),
-			"properties":  propertiesProp,
+			"reviews":     reviewsProps,
 		},
 	}
 
@@ -100,9 +103,28 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      true,
 			"category":    "electronics",
 			"rating":      5,
-			"properties": []map[string]any{
-				{"color": "red"},
-				{"warranty": "2year"},
+			"reviews": []map[string]any{
+				{
+					"author":   "Sarah Johnson",
+					"rating":   5,
+					"comment":  "Perfect for development work, great performance",
+					"date":     "2024-01-15",
+					"verified": true,
+				},
+				{
+					"author":   "Mike Chen",
+					"rating":   4,
+					"comment":  "Fast and reliable, battery could be better",
+					"date":     "2024-01-18",
+					"verified": true,
+				},
+				{
+					"author":   "Lisa Anderson",
+					"rating":   5,
+					"comment":  "Best laptop I've owned, highly recommend",
+					"date":     "2024-01-22",
+					"verified": false,
+				},
 			},
 		},
 		{
@@ -113,9 +135,21 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      true,
 			"category":    "fashion",
 			"rating":      3,
-			"properties": []map[string]any{
-				{"color": "blue"},
-				{"warranty": "2year"},
+			"reviews": []map[string]any{
+				{
+					"author":   "David Park",
+					"rating":   4,
+					"comment":  "Great sound quality, comfortable for long use",
+					"date":     "2024-01-10",
+					"verified": true,
+				},
+				{
+					"author":   "Emma Wilson",
+					"rating":   3,
+					"comment":  "Decent but noise cancellation could be better",
+					"date":     "2024-01-14",
+					"verified": true,
+				},
 			},
 		},
 		{
@@ -126,9 +160,35 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      false,
 			"category":    "home",
 			"rating":      2,
-			"properties": []map[string]any{
-				{"color": "blue"},
-				{"warranty": "1year"},
+			"reviews": []map[string]any{
+				{
+					"author":   "Robert Martinez",
+					"rating":   5,
+					"comment":  "Makes perfect coffee every morning!",
+					"date":     "2024-01-12",
+					"verified": true,
+				},
+				{
+					"author":   "Jennifer Lee",
+					"rating":   5,
+					"comment":  "Easy to clean and brews quickly",
+					"date":     "2024-01-19",
+					"verified": true,
+				},
+				{
+					"author":   "Tom Brown",
+					"rating":   4,
+					"comment":  "Good value for money, works great",
+					"date":     "2024-01-21",
+					"verified": false,
+				},
+				{
+					"author":   "Amy Davis",
+					"rating":   5,
+					"comment":  "Best purchase this year",
+					"date":     "2024-01-25",
+					"verified": true,
+				},
 			},
 		},
 		{
@@ -139,9 +199,21 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      true,
 			"category":    "electronics",
 			"rating":      4,
-			"properties": []map[string]any{
-				{"color": "blue"},
-				{"warranty": "1year"},
+			"reviews": []map[string]any{
+				{
+					"author":   "Kevin White",
+					"rating":   4,
+					"comment":  "Comfortable for long runs, good arch support",
+					"date":     "2024-01-08",
+					"verified": true,
+				},
+				{
+					"author":   "Rachel Green",
+					"rating":   5,
+					"comment":  "Perfect fit, great cushioning",
+					"date":     "2024-01-16",
+					"verified": true,
+				},
 			},
 		},
 		{
@@ -152,9 +224,28 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      true,
 			"category":    "home",
 			"rating":      3,
-			"properties": []map[string]any{
-				{"color": "green"},
-				{"warranty": "3year"},
+			"reviews": []map[string]any{
+				{
+					"author":   "Kevin White",
+					"rating":   3,
+					"comment":  "Decent lighting but base feels cheap",
+					"date":     "2024-01-11",
+					"verified": true,
+				},
+				{
+					"author":   "Nicole Garcia",
+					"rating":   4,
+					"comment":  "Good for reading, adjustable brightness is nice",
+					"date":     "2024-01-17",
+					"verified": false,
+				},
+				{
+					"author":   "Steve Rodriguez",
+					"rating":   2,
+					"comment":  "Too dim for my workspace",
+					"date":     "2024-01-23",
+					"verified": true,
+				},
 			},
 		},
 	}
@@ -226,27 +317,86 @@ func TestEverythin(t *testing.T) {
 		ep := reveald.NewEndpoint(backend, reveald.WithIndices(testIndex))
 
 		err = ep.Register(
-			featureset.NewNestedDocumentWrapper("properties",
-				featureset.NewDynamicFilterFeature("properties.color"),
-				featureset.NewDynamicFilterFeature("properties.warranty"),
+			featureset.NewNestedDocumentWrapper("reviews",
+				featureset.NewHistogramFeature(
+					"reviews.rating",
+					featureset.WithInterval(1),
+					featureset.WithoutZeroBucket(),
+				),
+				featureset.NewDynamicFilterFeature("reviews.author"),
+				featureset.NewDateHistogramFeature(
+					"reviews.date",
+					"yyyy-MM-dd",
+					featureset.WithCalendarInterval("month"),
+					featureset.WithCalendarIntervalInstead(),
+				),
 			),
 		)
 
 		require.NoError(t, err, "Failed to register features")
 
-		req := reveald.NewRequest(
-			reveald.NewParameter("properties.warranty", "2year"),
-		)
+		t.Run("Filter on DynamicFilterFeature", func(t *testing.T) {
+			req := reveald.NewRequest(
+				reveald.NewParameter("reviews.author", "Kevin White"),
+			)
 
-		res, err := ep.Execute(ctx, req)
-		require.NoError(t, err, "Failed to execute search")
+			res, err := ep.Execute(ctx, req)
+			require.NoError(t, err, "Failed to execute search")
 
-		assert.Len(t, res.Hits, 3)
+			assert.Len(t, res.Hits, 2)
 
-		bucket, ok := res.Aggregations["properties.warranty"]
-		require.True(t, ok, "Expected aggregation 'properties.warranty' to be present")
+			authorBucket, ok := res.Aggregations["reviews.author"]
+			require.True(t, ok, "Expected aggregation 'reviews.author' to be present")
 
-		assert.Len(t, bucket, 2)
+			assert.Len(t, authorBucket, 1)
+
+			ratingBucket, ok := res.Aggregations["reviews.rating"]
+			require.True(t, ok, "Expected aggregation 'reviews.rating' to be present")
+
+			assert.Len(t, ratingBucket, 2)
+		})
+
+		t.Run("Filter on Histogram", func(t *testing.T) {
+			req := reveald.NewRequest(
+				reveald.NewParameter("reviews.rating.min", "5"),
+			)
+
+			res, err := ep.Execute(ctx, req)
+			require.NoError(t, err, "Failed to execute search")
+
+			assert.Len(t, res.Hits, 3)
+
+			authorBucket, ok := res.Aggregations["reviews.author"]
+			require.True(t, ok, "Expected aggregation 'reviews.author' to be present")
+
+			assert.Len(t, authorBucket, 6)
+
+			ratingBucket, ok := res.Aggregations["reviews.rating"]
+			require.True(t, ok, "Expected aggregation 'reviews.rating' to be present")
+
+			assert.Len(t, ratingBucket, 1)
+		})
+
+		t.Run("Filter on DateHistogram", func(t *testing.T) {
+			req := reveald.NewRequest(
+				reveald.NewParameter("reviews.date.min", "2024-01-20"),
+			)
+
+			res, err := ep.Execute(ctx, req)
+			require.NoError(t, err, "Failed to execute search")
+
+			assert.Len(t, res.Hits, 3)
+
+			authorBucket, ok := res.Aggregations["reviews.author"]
+			require.True(t, ok, "Expected aggregation 'reviews.author' to be present")
+
+			assert.Len(t, authorBucket, 4)
+
+			ratingBucket, ok := res.Aggregations["reviews.rating"]
+			require.True(t, ok, "Expected aggregation 'reviews.rating' to be present")
+
+			assert.Len(t, ratingBucket, 3)
+		})
 	})
 }
 
