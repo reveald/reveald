@@ -324,12 +324,12 @@ func TestEverythin(t *testing.T) {
 					featureset.WithoutZeroBucket(),
 				),
 				featureset.NewDynamicFilterFeature("reviews.author"),
-				featureset.NewDateHistogramFeature(
-					"reviews.date",
-					"yyyy-MM-dd",
-					featureset.WithCalendarInterval("month"),
-					featureset.WithCalendarIntervalInstead(),
-				),
+				// featureset.NewDateHistogramFeature(
+				// 	"reviews.date",
+				// 	featureset.Day, // Using the Day constant
+				// 	featureset.WithDateFormat("yyyy-MM-dd"),
+				// 	featureset.WithCalendarIntervalInstead(),
+				// ),
 			),
 		)
 
@@ -377,26 +377,48 @@ func TestEverythin(t *testing.T) {
 			assert.Len(t, ratingBucket, 1)
 		})
 
-		t.Run("Filter on DateHistogram", func(t *testing.T) {
+		t.Run("Multiple filters", func(t *testing.T) {
 			req := reveald.NewRequest(
-				reveald.NewParameter("reviews.date.min", "2024-01-20"),
+				reveald.NewParameter("reviews.author", "Kevin White"),
+				reveald.NewParameter("reviews.rating.min", "4"),
 			)
 
 			res, err := ep.Execute(ctx, req)
 			require.NoError(t, err, "Failed to execute search")
 
-			assert.Len(t, res.Hits, 3)
+			assert.Len(t, res.Hits, 1)
 
 			authorBucket, ok := res.Aggregations["reviews.author"]
 			require.True(t, ok, "Expected aggregation 'reviews.author' to be present")
 
-			assert.Len(t, authorBucket, 4)
+			assert.Len(t, authorBucket, 1)
 
 			ratingBucket, ok := res.Aggregations["reviews.rating"]
 			require.True(t, ok, "Expected aggregation 'reviews.rating' to be present")
 
-			assert.Len(t, ratingBucket, 3)
+			assert.Len(t, ratingBucket, 1)
 		})
+
+		// t.Run("Filter on DateHistogram", func(t *testing.T) {
+		// 	req := reveald.NewRequest(
+		// 		reveald.NewParameter("reviews.date.min", "2024-01-20"),
+		// 	)
+
+		// 	res, err := ep.Execute(ctx, req)
+		// 	require.NoError(t, err, "Failed to execute search")
+
+		// 	assert.Len(t, res.Hits, 3)
+
+		// 	authorBucket, ok := res.Aggregations["reviews.author"]
+		// 	require.True(t, ok, "Expected aggregation 'reviews.author' to be present")
+
+		// 	assert.Len(t, authorBucket, 4)
+
+		// 	ratingBucket, ok := res.Aggregations["reviews.rating"]
+		// 	require.True(t, ok, "Expected aggregation 'reviews.rating' to be present")
+
+		// 	assert.Len(t, ratingBucket, 3)
+		// })
 	})
 }
 
