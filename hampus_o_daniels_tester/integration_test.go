@@ -63,16 +63,23 @@ func createElasticsearchClient(esURL string) (*elasticsearch.TypedClient, error)
 func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 	ctx := context.Background()
 
+	propertiesProp := types.NewNestedProperty()
+	propertiesProp.Properties = map[string]types.Property{
+		"color":    withKeywordProperty(types.NewKeywordProperty()),
+		"warranty": withKeywordProperty(types.NewTextProperty()),
+	}
+
 	// Create mapping for test index
 	indexMapping := types.TypeMapping{
 		Properties: map[string]types.Property{
-			"title":       types.NewTextProperty(),
-			"description": types.NewTextProperty(),
-			"tags":        types.NewKeywordProperty(),
+			"title":       withKeywordProperty(types.NewTextProperty()),
+			"description": withKeywordProperty(types.NewTextProperty()),
+			"tags":        withKeywordProperty(types.NewKeywordProperty()),
 			"price":       types.NewFloatNumberProperty(),
 			"active":      types.NewBooleanProperty(),
-			"category":    types.NewKeywordProperty(),
+			"category":    withKeywordProperty(types.NewKeywordProperty()),
 			"rating":      types.NewIntegerNumberProperty(),
+			"properties":  propertiesProp,
 		},
 	}
 
@@ -93,6 +100,10 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      true,
 			"category":    "electronics",
 			"rating":      5,
+			"properties": []map[string]any{
+				{"color": "red"},
+				{"warranty": "2year"},
+			},
 		},
 		{
 			"title":       "Product 2",
@@ -102,6 +113,10 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      true,
 			"category":    "fashion",
 			"rating":      3,
+			"properties": []map[string]any{
+				{"color": "blue"},
+				{"warranty": "2year"},
+			},
 		},
 		{
 			"title":       "Product 3",
@@ -111,6 +126,10 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      false,
 			"category":    "home",
 			"rating":      2,
+			"properties": []map[string]any{
+				{"color": "blue"},
+				{"warranty": "1year"},
+			},
 		},
 		{
 			"title":       "Product 4",
@@ -120,6 +139,10 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      true,
 			"category":    "electronics",
 			"rating":      4,
+			"properties": []map[string]any{
+				{"color": "blue"},
+				{"warranty": "1year"},
+			},
 		},
 		{
 			"title":       "Product 5",
@@ -129,6 +152,10 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      true,
 			"category":    "home",
 			"rating":      3,
+			"properties": []map[string]any{
+				{"color": "green"},
+				{"warranty": "3year"},
+			},
 		},
 	}
 
@@ -179,18 +206,65 @@ func TestEverythin(t *testing.T) {
 		ep := reveald.NewEndpoint(backend, reveald.WithIndices(testIndex))
 
 		err = ep.Register(
-			featureset.NewDynamicFilterFeature("title"),
+			featureset.NewDynamicFilterFeature("category"),
 		)
 		require.NoError(t, err, "Failed to register features")
 
 		req := reveald.NewRequest(
-			reveald.NewParameter("title", "Product 1"),
+			reveald.NewParameter("category", "electronics"),
 		)
 
 		res, err := ep.Execute(ctx, req)
 		require.NoError(t, err, "Failed to execute search")
 
-		assert.Len(t, res.Hits, 1)
+		assert.Len(t, res.Hits, 2)
 	})
 
+	t.Run("TestNestedProperties", func(t *testing.T) {
+		ctx := context.Background()
+
+		ep := reveald.NewEndpoint(backend, reveald.WithIndices(testIndex))
+
+		err = ep.Register(
+			featureset.NewNestedDocumentWrapper("properties",
+				featureset.NewDynamicFilterFeature("properties.color"),
+				featureset.NewDynamicFilterFeature("properties.warranty"),
+			),
+		)
+
+		require.NoError(t, err, "Failed to register features")
+
+		req := reveald.NewRequest(
+			reveald.NewParameter("properties.warranty", "2year"),
+		)
+
+		res, err := ep.Execute(ctx, req)
+		require.NoError(t, err, "Failed to execute search")
+
+		assert.Len(t, res.Hits, 3)
+
+		bucket, ok := res.Aggregations["properties.warranty"]
+		require.True(t, ok, "Expected aggregation 'properties.warranty' to be present")
+
+		assert.Len(t, bucket, 2)
+	})
+}
+
+func withKeywordProperty(property types.Property) types.Property {
+	switch v := property.(type) {
+	case *types.TextProperty:
+		v.Fields = map[string]types.Property{
+			"keyword": types.NewKeywordProperty(),
+		}
+
+		return v
+	case *types.KeywordProperty:
+		v.Fields = map[string]types.Property{
+			"keyword": types.NewKeywordProperty(),
+		}
+
+		return v
+	}
+
+	return property
 }
