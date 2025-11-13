@@ -367,7 +367,7 @@ func (dhf *DateHistogramFeature) handle(result *reveald.Result) (*reveald.Result
 		return result, nil
 	}
 
-	histogram, ok := agg.(types.DateHistogramAggregate)
+	histogram, ok := agg.(*types.DateHistogramAggregate)
 	if !ok {
 		return result, nil
 	}
