@@ -36,6 +36,8 @@ type Parameter struct {
 	max    float64
 	wmin   bool
 	wmax   bool
+	minStr string
+	maxStr string
 }
 
 // NewParameter creates a Parameter based on the specified function arguments.
@@ -60,11 +62,13 @@ func NewParameter(name string, values ...string) Parameter {
 
 	for _, v := range values {
 		if strings.HasSuffix(name, "."+RangeMinParameterName) {
+			pv.minStr = v // Store original string
 			pv.min, err = strconv.ParseFloat(v, 64)
 			pv.wmin = err == nil
 			pv.name = name[:len(name)-len("."+RangeMinParameterName)]
 		}
 		if strings.HasSuffix(name, "."+RangeMaxParameterName) {
+			pv.maxStr = v // Store original string
 			pv.max, err = strconv.ParseFloat(v, 64)
 			pv.wmax = err == nil
 			pv.name = name[:len(name)-len("."+RangeMaxParameterName)]
@@ -138,6 +142,38 @@ func (pv Parameter) Min() (float64, bool) {
 //	}
 func (pv Parameter) Max() (float64, bool) {
 	return pv.max, pv.wmax
+}
+
+// MinString returns the original string value for the minimum range bound.
+//
+// This is useful for date parameters where the string representation should be
+// preserved (e.g., "2024-01-06" instead of converting through float64).
+//
+// Example:
+//
+//	param := reveald.NewParameter("created_at.min", "2024-01-06")
+//	minStr, hasMin := param.MinString()
+//	if hasMin {
+//	    fmt.Printf("Minimum date: %s\n", minStr)
+//	}
+func (pv Parameter) MinString() (string, bool) {
+	return pv.minStr, pv.minStr != ""
+}
+
+// MaxString returns the original string value for the maximum range bound.
+//
+// This is useful for date parameters where the string representation should be
+// preserved (e.g., "2024-12-31" instead of converting through float64).
+//
+// Example:
+//
+//	param := reveald.NewParameter("created_at.max", "2024-12-31")
+//	maxStr, hasMax := param.MaxString()
+//	if hasMax {
+//	    fmt.Printf("Maximum date: %s\n", maxStr)
+//	}
+func (pv Parameter) MaxString() (string, bool) {
+	return pv.maxStr, pv.maxStr != ""
 }
 
 // Merge combines a parameter with another parameter.

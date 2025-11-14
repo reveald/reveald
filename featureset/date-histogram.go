@@ -1,7 +1,6 @@
 package featureset
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
@@ -272,18 +271,18 @@ func (dhf *DateHistogramFeature) build(builder *reveald.QueryBuilder) {
 			// Create a date range query directly with typed objects
 			var dateRangeQuery types.DateRangeQuery
 
-			max, wmax := p.Max()
+			max, wmax := p.MaxString()
 			if wmax {
 				// Convert float64 to string for date range
-				dateMax := fmt.Sprintf("%v", max)
-				dateRangeQuery.Lte = &dateMax
+				// dateMax := fmt.Sprintf("%v", max)
+				dateRangeQuery.Lte = &max
 			}
 
-			min, wmin := p.Min()
+			min, wmin := p.MinString()
 			if wmin {
 				// Convert float64 to string for date range
-				dateMin := fmt.Sprintf("%v", min)
-				dateRangeQuery.Gte = &dateMin
+				// dateMin := fmt.Sprintf("%v", min)
+				dateRangeQuery.Gte = &min
 			}
 
 			// Create the full range query
@@ -382,8 +381,13 @@ func (dhf *DateHistogramFeature) handle(result *reveald.Result) (*reveald.Result
 		if bucket.DocCount == 0 && !dhf.zerobucket {
 			continue
 		}
+		var key any
+		key = bucket.Key
+		if dhf.format != "" && bucket.KeyAsString != nil {
+			key = *bucket.KeyAsString
+		}
 		resultBuckets = append(resultBuckets, &reveald.ResultBucket{
-			Value:    bucket.Key,
+			Value:    key,
 			HitCount: bucket.DocCount,
 		})
 	}

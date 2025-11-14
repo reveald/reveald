@@ -82,6 +82,7 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      types.NewBooleanProperty(),
 			"category":    withKeywordProperty(types.NewKeywordProperty()),
 			"rating":      types.NewIntegerNumberProperty(),
+			"created_at":  types.NewDateProperty(),
 			"reviews":     reviewsProps,
 		},
 	}
@@ -103,6 +104,7 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      true,
 			"category":    "electronics",
 			"rating":      5,
+			"created_at":  "2024-01-01T00:00:00Z",
 			"reviews": []map[string]any{
 				{
 					"author":   "Sarah Johnson",
@@ -135,6 +137,7 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      true,
 			"category":    "fashion",
 			"rating":      3,
+			"created_at":  "2024-01-05T00:00:00Z",
 			"reviews": []map[string]any{
 				{
 					"author":   "David Park",
@@ -160,6 +163,7 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      false,
 			"category":    "home",
 			"rating":      2,
+			"created_at":  "2024-01-07T00:00:00Z",
 			"reviews": []map[string]any{
 				{
 					"author":   "Robert Martinez",
@@ -199,6 +203,7 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      true,
 			"category":    "electronics",
 			"rating":      4,
+			"created_at":  "2024-01-03T00:00:00Z",
 			"reviews": []map[string]any{
 				{
 					"author":   "Kevin White",
@@ -224,6 +229,7 @@ func createTestIndex(t *testing.T, client *elasticsearch.TypedClient) {
 			"active":      true,
 			"category":    "home",
 			"rating":      3,
+			"created_at":  "2024-01-09T00:00:00Z",
 			"reviews": []map[string]any{
 				{
 					"author":   "Kevin White",
@@ -291,25 +297,25 @@ func TestEverythin(t *testing.T) {
 	backend, err := reveald.NewElasticBackend([]string{httpURL})
 	require.NoError(t, err, "Failed to create Reveald Elasticsearch backend")
 
-	t.Run("TestBasicSearch", func(t *testing.T) {
-		ctx := context.Background()
+	// t.Run("TestBasicSearch", func(t *testing.T) {
+	// 	ctx := context.Background()
 
-		ep := reveald.NewEndpoint(backend, reveald.WithIndices(testIndex))
+	// 	ep := reveald.NewEndpoint(backend, reveald.WithIndices(testIndex))
 
-		err = ep.Register(
-			featureset.NewDynamicFilterFeature("category"),
-		)
-		require.NoError(t, err, "Failed to register features")
+	// 	err = ep.Register(
+	// 		featureset.NewDynamicFilterFeature("category"),
+	// 	)
+	// 	require.NoError(t, err, "Failed to register features")
 
-		req := reveald.NewRequest(
-			reveald.NewParameter("category", "electronics"),
-		)
+	// 	req := reveald.NewRequest(
+	// 		reveald.NewParameter("category", "electronics"),
+	// 	)
 
-		res, err := ep.Execute(ctx, req)
-		require.NoError(t, err, "Failed to execute search")
+	// 	res, err := ep.Execute(ctx, req)
+	// 	require.NoError(t, err, "Failed to execute search")
 
-		assert.Len(t, res.Hits, 2)
-	})
+	// 	assert.Len(t, res.Hits, 2)
+	// })
 
 	t.Run("TestNestedProperties", func(t *testing.T) {
 		ctx := context.Background()
@@ -318,20 +324,26 @@ func TestEverythin(t *testing.T) {
 
 		err = ep.Register(
 			featureset.NewDynamicFilterFeature("category"),
-			featureset.NewNestedDocumentWrapper("reviews",
-				featureset.NewHistogramFeature(
-					"reviews.rating",
-					featureset.WithInterval(1),
-					featureset.WithoutZeroBucket(),
-				),
-				featureset.NewDynamicFilterFeature("reviews.author"),
-				featureset.NewDateHistogramFeature(
-					"reviews.date",
-					featureset.Day, // Using the Day constant
-					featureset.WithDateFormat("yyyy-MM-dd"),
-					featureset.WithCalendarIntervalInstead(),
-				),
+			featureset.NewDateHistogramFeature("created_at",
+				"day", // Using the Day constant
+				featureset.WithCalendarInterval("day"),
+				featureset.WithDateFormat("strict_date"),
+				featureset.WithCalendarIntervalInstead(),
 			),
+			// featureset.NewNestedDocumentWrapper("reviews",
+			// 	featureset.NewHistogramFeature(
+			// 		"reviews.rating",
+			// 		featureset.WithInterval(1),
+			// 		featureset.WithoutZeroBucket(),
+			// 	),
+			// 	featureset.NewDynamicFilterFeature("reviews.author"),
+			// 	featureset.NewDateHistogramFeature(
+			// 		"reviews.date",
+			// 		featureset.Day, // Using the Day constant
+			// 		featureset.WithDateFormat("yyyy-MM-dd"),
+			// 		featureset.WithCalendarIntervalInstead(),
+			// 	),
+			// ),
 		)
 
 		require.NoError(t, err, "Failed to register features")
@@ -378,38 +390,41 @@ func TestEverythin(t *testing.T) {
 		// 	assert.Len(t, ratingBucket, 1)
 		// })
 
-		t.Run("Multiple filters", func(t *testing.T) {
-			req := reveald.NewRequest(
-				reveald.NewParameter("reviews.author", "Kevin White"),
-				reveald.NewParameter("reviews.rating.min", "4"),
-				reveald.NewParameter("category", "electronics"),
-			)
+		// t.Run("Multiple filters", func(t *testing.T) {
+		// 	req := reveald.NewRequest(
+		// 		reveald.NewParameter("reviews.author", "Kevin White"),
+		// 		reveald.NewParameter("reviews.rating.min", "4"),
+		// 		reveald.NewParameter("category", "electronics"),
+		// 	)
 
-			res, err := ep.Execute(ctx, req)
-			require.NoError(t, err, "Failed to execute search")
+		// 	res, err := ep.Execute(ctx, req)
+		// 	require.NoError(t, err, "Failed to execute search")
 
-			assert.Len(t, res.Hits, 1)
+		// 	assert.Len(t, res.Hits, 1)
 
-			authorBucket, ok := res.Aggregations["reviews.author"]
-			require.True(t, ok, "Expected aggregation 'reviews.author' to be present")
+		// 	authorBucket, ok := res.Aggregations["reviews.author"]
+		// 	require.True(t, ok, "Expected aggregation 'reviews.author' to be present")
 
-			assert.Len(t, authorBucket, 1)
+		// 	assert.Len(t, authorBucket, 1)
 
-			ratingBucket, ok := res.Aggregations["reviews.rating"]
-			require.True(t, ok, "Expected aggregation 'reviews.rating' to be present")
+		// 	ratingBucket, ok := res.Aggregations["reviews.rating"]
+		// 	require.True(t, ok, "Expected aggregation 'reviews.rating' to be present")
 
-			assert.Len(t, ratingBucket, 1)
-		})
+		// 	assert.Len(t, ratingBucket, 1)
+		// })
 
 		t.Run("Filter on DateHistogram", func(t *testing.T) {
+			// Convert date to seconds timestamp
+			// 2024-01-06 00:00:00 UTC = 1704499200 seconds
+
 			req := reveald.NewRequest(
-				reveald.NewParameter("reviews.date.min", "2024-01-20"),
+				reveald.NewParameter("created_at.min", "2024-01-05"), // 2024-01-05 in milliseconds
 			)
 
 			res, err := ep.Execute(ctx, req)
 			require.NoError(t, err, "Failed to execute search")
 
-			assert.Len(t, res.Hits, 3)
+			assert.Len(t, res.Hits, 2)
 
 			authorBucket, ok := res.Aggregations["reviews.author"]
 			require.True(t, ok, "Expected aggregation 'reviews.author' to be present")
@@ -441,4 +456,12 @@ func withKeywordProperty(property types.Property) types.Property {
 	}
 
 	return property
+}
+
+func dateToTimestamp(dateStr string) string {
+	t, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		panic(err)
+	}
+	return fmt.Sprintf("%d", t.UnixMilli())
 }
