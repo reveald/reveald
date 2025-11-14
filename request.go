@@ -36,6 +36,8 @@ type Parameter struct {
 	max    string
 	wmin   bool
 	wmax   bool
+	minStr string
+	maxStr string
 }
 
 // NewParameter creates a Parameter based on the specified function arguments.
