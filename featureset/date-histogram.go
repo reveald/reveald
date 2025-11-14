@@ -1,6 +1,7 @@
 package featureset
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
@@ -271,18 +272,28 @@ func (dhf *DateHistogramFeature) build(builder *reveald.QueryBuilder) {
 			// Create a date range query directly with typed objects
 			var dateRangeQuery types.DateRangeQuery
 
-			max, wmax := p.MaxString()
-			if wmax {
-				// Convert float64 to string for date range
-				// dateMax := fmt.Sprintf("%v", max)
-				dateRangeQuery.Lte = &max
+			// Try to get string values first (for date strings like "2024-01-06")
+			// Fall back to numeric values if string not available
+			maxStr, hasMaxStr := p.MaxString()
+			if hasMaxStr {
+				dateRangeQuery.Lte = &maxStr
+			} else {
+				max, wmax := p.Max()
+				if wmax {
+					dateMax := fmt.Sprintf("%v", max)
+					dateRangeQuery.Lte = &dateMax
+				}
 			}
 
-			min, wmin := p.MinString()
-			if wmin {
-				// Convert float64 to string for date range
-				// dateMin := fmt.Sprintf("%v", min)
-				dateRangeQuery.Gte = &min
+			minStr, hasMinStr := p.MinString()
+			if hasMinStr {
+				dateRangeQuery.Gte = &minStr
+			} else {
+				min, wmin := p.Min()
+				if wmin {
+					dateMin := fmt.Sprintf("%v", min)
+					dateRangeQuery.Gte = &dateMin
+				}
 			}
 
 			// Create the full range query
