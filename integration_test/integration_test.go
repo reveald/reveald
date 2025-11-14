@@ -186,6 +186,11 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 
 		err = ep.Register(
 			featureset.NewDynamicFilterFeature("category"),
+			featureset.NewDynamicBooleanFilterFeature("active"),
+			featureset.NewHistogramFeature("rating",
+				featureset.WithInterval(1),
+				featureset.WithoutZeroBucket(),
+			),
 			featureset.NewDateHistogramFeature("created_at",
 				featureset.Day,
 				featureset.WithCalendarInterval("day"),
@@ -210,12 +215,29 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 				expectedAggs: map[string]int{"category": 1},
 			},
 			{
+				name: "Filter on boolean field",
+				params: []reveald.Parameter{
+					reveald.NewParameter("active", "true"),
+				},
+				expectedHits: 4,
+				expectedAggs: map[string]int{"category": 3, "created_at": 4, "active": 2},
+			},
+			{
+				name: "Filter on histogram field",
+				params: []reveald.Parameter{
+					reveald.NewParameter("rating.min", "3"),
+					reveald.NewParameter("rating.max", "4"),
+				},
+				expectedHits: 3,
+				expectedAggs: map[string]int{"rating": 2},
+			},
+			{
 				name: "Filter on date range",
 				params: []reveald.Parameter{
 					reveald.NewParameter("created_at.min", "2024-01-05"),
 				},
 				expectedHits: 3,
-				expectedAggs: map[string]int{"category": 2, "created_at": 3},
+				expectedAggs: map[string]int{"category": 2, "created_at": 3, "active": 2},
 			},
 		}
 
