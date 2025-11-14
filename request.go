@@ -83,7 +83,7 @@ func NewParameter(name string, values ...string) Parameter {
 //	    // Handle as a range parameter
 //	}
 func (pv Parameter) IsRangeValue() bool {
-	return pv.wmin || pv.wmax
+	return pv.wmin || pv.wmax || pv.minStr != "" || pv.maxStr != ""
 }
 
 // IsTruthy returns true for a boolean value that is true.
