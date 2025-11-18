@@ -36,8 +36,6 @@ type Parameter struct {
 	max    string
 	wmin   bool
 	wmax   bool
-	minStr string
-	maxStr string
 }
 
 // NewParameter creates a Parameter based on the specified function arguments.
@@ -83,7 +81,7 @@ func NewParameter(name string, values ...string) Parameter {
 //	    // Handle as a range parameter
 //	}
 func (pv Parameter) IsRangeValue() bool {
-	return pv.wmin || pv.wmax || pv.minStr != "" || pv.maxStr != ""
+	return pv.wmin || pv.wmax
 }
 
 // IsTruthy returns true for a boolean value that is true.
