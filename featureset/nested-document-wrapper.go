@@ -19,9 +19,8 @@ import (
 //	    featureset.NewDynamicFilterFeature("items.tags"),
 //	)
 type NestedDocumentWrapper struct {
-	path        string
-	features    []reveald.Feature
-	disjunctive bool
+	path     string
+	features []reveald.Feature
 }
 
 // NewNestedDocumentWrapper creates a nested document wrapper for the specified path.
@@ -29,30 +28,9 @@ type NestedDocumentWrapper struct {
 // operate on fields within that nested path.
 func NewNestedDocumentWrapper(path string, features ...reveald.Feature) *NestedDocumentWrapper {
 	return &NestedDocumentWrapper{
-		path:        path,
-		features:    features,
-		disjunctive: false,
+		path:     path,
+		features: features,
 	}
-}
-
-// Disjunctive enables disjunctive mode for faceted search aggregations.
-//
-// In conjunctive mode (default), aggregations include all active filters, narrowing
-// results progressively as filters are applied.
-//
-// In disjunctive mode, each facet's aggregation excludes its own filter but includes
-// others, allowing users to see all available options for each facet independently.
-// This prevents empty aggregation buckets when multiple filters are active.
-//
-// Example:
-//
-//	wrapper := featureset.NewNestedDocumentWrapper("items",
-//	    featureset.NewDynamicFilterFeature("items.category"),
-//	    featureset.NewDynamicFilterFeature("items.tags"),
-//	).Disjunctive(true)
-func (ndw *NestedDocumentWrapper) Disjunctive(enable bool) *NestedDocumentWrapper {
-	ndw.disjunctive = enable
-	return ndw
 }
 
 // Process implements the Feature interface, wrapping child feature queries and
@@ -193,75 +171,12 @@ func (ndw *NestedDocumentWrapper) unwrapNestedAggregation(aggName string, rawAgg
 	return innerAgg
 }
 
-// buildFilterClausesForAgg builds filter clauses for an aggregation based on mode.
-// Conjunctive: includes all filters. Disjunctive: excludes the aggregation's own filter.
+// buildFilterClausesForAgg builds filter clauses for an aggregation.
+// All filters are included (conjunctive mode).
 func (ndw *NestedDocumentWrapper) buildFilterClausesForAgg(aggName string, query *types.Query) []types.Query {
 	if query == nil || query.Bool == nil {
 		return nil
 	}
 
-	allClauses := query.Bool.Must
-
-	if !ndw.disjunctive {
-		// Conjunctive mode: include all filters
-		return append([]types.Query{}, allClauses...)
-	}
-
-	// Disjunctive mode: exclude the filter for this specific aggregation
-	var result []types.Query
-	for _, mustClause := range allClauses {
-		property := ndw.extractPropertyFromQuery(mustClause)
-		// Exclude this clause if it's for the current aggregation property
-		if property != aggName {
-			result = append(result, mustClause)
-		}
-	}
-
-	return result
-}
-
-// extractPropertyFromQuery extracts the property name from a query clause for
-// determining filter ownership in disjunctive mode.
-func (ndw *NestedDocumentWrapper) extractPropertyFromQuery(query types.Query) string {
-	// Handle term queries (from DynamicFilterFeature)
-	if query.Term != nil {
-		for field := range query.Term {
-			// Remove .keyword suffix to get base property name
-			if strings.HasSuffix(field, ".keyword") {
-				return field[:len(field)-len(".keyword")]
-			}
-			return field
-		}
-	}
-
-	// Handle range queries (from HistogramFeature and DateHistogramFeature)
-	if query.Range != nil {
-		for field := range query.Range {
-			return field
-		}
-	}
-
-	// Handle bool queries with should clauses (from DynamicFilterFeature with multiple values)
-	if query.Bool != nil {
-		if len(query.Bool.Should) > 0 {
-			// Recursively extract from first should clause
-			return ndw.extractPropertyFromQuery(query.Bool.Should[0])
-		}
-
-		// Handle missing value queries (bool with must_not exists)
-		if len(query.Bool.MustNot) > 0 {
-			for _, mustNot := range query.Bool.MustNot {
-				if mustNot.Exists != nil {
-					field := mustNot.Exists.Field
-					if strings.HasSuffix(field, ".keyword") {
-						return field[:len(field)-len(".keyword")]
-					}
-					return field
-				}
-			}
-		}
-	}
-
-	// If we can't determine the property, return empty string
-	return ""
+	return append([]types.Query{}, query.Bool.Must...)
 }
