@@ -272,8 +272,6 @@ func (dhf *DateHistogramFeature) build(builder *reveald.QueryBuilder) {
 			// Create a date range query directly with typed objects
 			var dateRangeQuery types.DateRangeQuery
 
-			// Try to get string values first (for date strings like "2024-01-06")
-			// Fall back to numeric values if string not available
 			maxStr, hasMaxStr := p.MaxString()
 			if hasMaxStr {
 				dateRangeQuery.Lte = &maxStr
