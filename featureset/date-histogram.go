@@ -272,18 +272,14 @@ func (dhf *DateHistogramFeature) build(builder *reveald.QueryBuilder) {
 			// Create a date range query directly with typed objects
 			var dateRangeQuery types.DateRangeQuery
 
-			max, wmax := p.Max()
-			if wmax {
-				// Convert float64 to string for date range
-				dateMax := fmt.Sprintf("%v", max)
-				dateRangeQuery.Lte = &dateMax
+			maxStr, hasMaxStr := p.MaxString()
+			if hasMaxStr {
+				dateRangeQuery.Lte = &maxStr
 			}
 
-			min, wmin := p.Min()
-			if wmin {
-				// Convert float64 to string for date range
-				dateMin := fmt.Sprintf("%v", min)
-				dateRangeQuery.Gte = &dateMin
+			minStr, hasMinStr := p.MinString()
+			if hasMinStr {
+				dateRangeQuery.Gte = &minStr
 			}
 
 			// Create the full range query
@@ -382,8 +378,12 @@ func (dhf *DateHistogramFeature) handle(result *reveald.Result) (*reveald.Result
 		if bucket.DocCount == 0 && !dhf.zerobucket {
 			continue
 		}
+		key := fmt.Sprintf("%d", bucket.Key)
+		if dhf.format != "" && bucket.KeyAsString != nil {
+			key = *bucket.KeyAsString
+		}
 		resultBuckets = append(resultBuckets, &reveald.ResultBucket{
-			Value:    bucket.Key,
+			Value:    key,
 			HitCount: bucket.DocCount,
 		})
 	}

@@ -32,8 +32,8 @@ const (
 type Parameter struct {
 	name   string
 	values []string
-	min    float64
-	max    float64
+	min    string
+	max    string
 	wmin   bool
 	wmax   bool
 }
@@ -56,17 +56,15 @@ func NewParameter(name string, values ...string) Parameter {
 	pv.name = name
 	pv.values = values
 
-	var err error
-
 	for _, v := range values {
 		if strings.HasSuffix(name, "."+RangeMinParameterName) {
-			pv.min, err = strconv.ParseFloat(v, 64)
-			pv.wmin = err == nil
+			pv.min = v
+			pv.wmin = v != ""
 			pv.name = name[:len(name)-len("."+RangeMinParameterName)]
 		}
 		if strings.HasSuffix(name, "."+RangeMaxParameterName) {
-			pv.max, err = strconv.ParseFloat(v, 64)
-			pv.wmax = err == nil
+			pv.max = v
+			pv.wmax = v != ""
 			pv.name = name[:len(name)-len("."+RangeMaxParameterName)]
 		}
 	}
@@ -122,7 +120,14 @@ func (pv Parameter) IsTruthy() bool {
 //	    fmt.Printf("Minimum price: %f\n", min)
 //	}
 func (pv Parameter) Min() (float64, bool) {
-	return pv.min, pv.wmin
+	if !pv.wmin {
+		return 0, false
+	}
+	min, err := strconv.ParseFloat(pv.min, 64)
+	if err != nil {
+		return 0, false
+	}
+	return min, true
 }
 
 // Max returns the higher range bound for a range parameter.
@@ -137,6 +142,45 @@ func (pv Parameter) Min() (float64, bool) {
 //	    fmt.Printf("Maximum price: %f\n", max)
 //	}
 func (pv Parameter) Max() (float64, bool) {
+	if !pv.wmax {
+		return 0, false
+	}
+	max, err := strconv.ParseFloat(pv.max, 64)
+	if err != nil {
+		return 0, false
+	}
+	return max, true
+}
+
+// MinString returns the original string value for the minimum range bound.
+//
+// This is useful for date parameters where the string representation should be
+// preserved (e.g., "2024-01-06" instead of converting through float64).
+//
+// Example:
+//
+//	param := reveald.NewParameter("created_at.min", "2024-01-06")
+//	minStr, hasMin := param.MinString()
+//	if hasMin {
+//	    fmt.Printf("Minimum date: %s\n", minStr)
+//	}
+func (pv Parameter) MinString() (string, bool) {
+	return pv.min, pv.wmin
+}
+
+// MaxString returns the original string value for the maximum range bound.
+//
+// This is useful for date parameters where the string representation should be
+// preserved (e.g., "2024-12-31" instead of converting through float64).
+//
+// Example:
+//
+//	param := reveald.NewParameter("created_at.max", "2024-12-31")
+//	maxStr, hasMax := param.MaxString()
+//	if hasMax {
+//	    fmt.Printf("Maximum date: %s\n", maxStr)
+//	}
+func (pv Parameter) MaxString() (string, bool) {
 	return pv.max, pv.wmax
 }
 
@@ -154,11 +198,11 @@ func (pv Parameter) Max() (float64, bool) {
 func (pv Parameter) Merge(m Parameter) Parameter {
 	pv.values = append(pv.values, m.values...)
 
-	if pv.min == 0 && m.wmin {
+	if pv.min == "" && m.wmin {
 		pv.min = m.min
 		pv.wmin = true
 	}
-	if pv.max == 0 && m.wmax {
+	if pv.max == "" && m.wmax {
 		pv.max = m.max
 		pv.wmax = true
 	}
