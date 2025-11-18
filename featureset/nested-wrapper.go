@@ -8,9 +8,9 @@ import (
 	"github.com/reveald/reveald/v2"
 )
 
-// NestedDocumentWrapper wraps a set of features to support nested document queries.
-// It automatically detects DynamicFilterFeature, HistogramFeature, and DateHistogramFeature
-// children and wraps their queries and aggregations in nested structures.
+// NestedDocumentWrapper wraps features to support nested document queries.
+// It automatically wraps child feature queries and aggregations in nested structures
+// for the specified path.
 //
 // Example:
 //
@@ -18,26 +18,15 @@ import (
 //	    featureset.NewDynamicFilterFeature("items.category"),
 //	    featureset.NewDynamicFilterFeature("items.tags"),
 //	)
-//
-// This will generate nested queries and aggregations that properly handle
-// the nested document structure.
 type NestedDocumentWrapper struct {
 	path        string
 	features    []reveald.Feature
 	disjunctive bool
 }
 
-// NewNestedDocumentWrapper creates a new nested document wrapper for the specified path.
-//
-// The path parameter should be the nested field path (e.g., "items").
-// The features parameter should be a list of features that operate on nested fields.
-//
-// Example:
-//
-//	wrapper := featureset.NewNestedDocumentWrapper("items",
-//	    featureset.NewDynamicFilterFeature("items.category"),
-//	    featureset.NewDynamicFilterFeature("items.tags"),
-//	)
+// NewNestedDocumentWrapper creates a nested document wrapper for the specified path.
+// The path should be the nested field path (e.g., "items"), and features should
+// operate on fields within that nested path.
 func NewNestedDocumentWrapper(path string, features ...reveald.Feature) *NestedDocumentWrapper {
 	return &NestedDocumentWrapper{
 		path:        path,
@@ -46,56 +35,17 @@ func NewNestedDocumentWrapper(path string, features ...reveald.Feature) *NestedD
 	}
 }
 
-// Disjunctive enables disjunctive (OR) mode for faceted search aggregations.
+// Disjunctive enables disjunctive mode for faceted search aggregations.
 //
-// # Understanding Conjunctive vs Disjunctive Filtering
+// In conjunctive mode (default), aggregations include all active filters, narrowing
+// results progressively as filters are applied.
 //
-// Conjunctive Mode (default, Disjunctive=false):
-//   - Hit queries: All filters combined with AND logic
-//   - Aggregations: Each aggregation filtered by ALL active filters (including its own)
-//   - Result: As you select more options, available choices narrow down progressively
-//   - Use case: When you want to drill down and find items matching ALL selected criteria
-//
-// Disjunctive Mode (Disjunctive=true):
-//   - Hit queries: All filters still combined with AND logic (for accurate results)
-//   - Aggregations: Each facet's aggregation excludes its own filter but includes others
-//   - Result: You can always see all available options for each facet independently
-//   - Use case: When you want users to explore different combinations without losing visibility
-//
-// # Example Scenario
-//
-// Given nested items with category and tags fields, suppose the data contains:
-//   - Item A: category="Electronics", tags="New"
-//   - Item B: category="Electronics", tags="Sale"
-//   - Item C: category="Books", tags="New"
-//
-// User selects: category="Electronics" AND tags="New"
-//
-// Conjunctive Mode Output:
-//
-//	Hits: [Item A] (only items matching both filters)
-//	Category aggregation: {Electronics: 1}     // Only shows categories for filtered items
-//	Tags aggregation: {New: 1}                 // Only shows tags for filtered items
-//
-// Disjunctive Mode Output:
-//
-//	Hits: [Item A] (only items matching both filters)
-//	Category aggregation: {Electronics: 2, Books: 1}  // Shows all categories (tags filter excluded)
-//	Tags aggregation: {New: 2, Sale: 1}              // Shows all tags (category filter excluded)
-//
-// The key difference: In disjunctive mode, users can see what OTHER options are available
-// for each facet, even when filters are active. This prevents "dead ends" where applying
-// too many filters results in empty aggregation buckets.
+// In disjunctive mode, each facet's aggregation excludes its own filter but includes
+// others, allowing users to see all available options for each facet independently.
+// This prevents empty aggregation buckets when multiple filters are active.
 //
 // Example:
 //
-//	// Conjunctive mode (default) - narrow down progressively
-//	wrapper := featureset.NewNestedDocumentWrapper("items",
-//	    featureset.NewDynamicFilterFeature("items.category"),
-//	    featureset.NewDynamicFilterFeature("items.tags"),
-//	)
-//
-//	// Disjunctive mode - explore freely
 //	wrapper := featureset.NewNestedDocumentWrapper("items",
 //	    featureset.NewDynamicFilterFeature("items.category"),
 //	    featureset.NewDynamicFilterFeature("items.tags"),
@@ -105,8 +55,8 @@ func (ndw *NestedDocumentWrapper) Disjunctive(enable bool) *NestedDocumentWrappe
 	return ndw
 }
 
-// Process implements the Feature interface.
-// It wraps child features and transforms their queries/aggregations to work with nested documents.
+// Process implements the Feature interface, wrapping child feature queries and
+// aggregations in nested structures.
 func (ndw *NestedDocumentWrapper) Process(builder *reveald.QueryBuilder, next reveald.FeatureFunc) (*reveald.Result, error) {
 	innerQueryBuilder := reveald.NewQueryBuilder(builder.Request(), builder.Indices()...)
 	for _, feature := range ndw.features {
@@ -160,7 +110,7 @@ func (ndw *NestedDocumentWrapper) wrapAndApplyToMainBuilder(builtReq *search.Req
 	}
 }
 
-// handleAggregations unwraps nested aggregation results for sub-features only
+// handleAggregations unwraps nested aggregation results for child features
 func (ndw *NestedDocumentWrapper) handleAggregations(res *reveald.Result) (*reveald.Result, error) {
 	rawAggs := res.RawAggregations()
 	unwrappedAggs := make(map[string]types.Aggregate)
@@ -203,7 +153,7 @@ func (ndw *NestedDocumentWrapper) handleAggregations(res *reveald.Result) (*reve
 	return currentResult, nil
 }
 
-// isOurAggregation checks if an aggregation name belongs to this nested wrapper
+// isOurAggregation checks if an aggregation belongs to this nested path
 func (ndw *NestedDocumentWrapper) isOurAggregation(aggName string) bool {
 	// Check if the aggregation name starts with our nested path
 	// e.g., "reviews.author" starts with "reviews"
@@ -243,8 +193,8 @@ func (ndw *NestedDocumentWrapper) unwrapNestedAggregation(aggName string, rawAgg
 	return innerAgg
 }
 
-// buildFilterClausesForAgg determines which filter clauses to apply for a given aggregation.
-// In conjunctive mode, includes all filters. In disjunctive mode, excludes the filter for this property.
+// buildFilterClausesForAgg builds filter clauses for an aggregation based on mode.
+// Conjunctive: includes all filters. Disjunctive: excludes the aggregation's own filter.
 func (ndw *NestedDocumentWrapper) buildFilterClausesForAgg(aggName string, query *types.Query) []types.Query {
 	if query == nil || query.Bool == nil {
 		return nil
@@ -270,8 +220,8 @@ func (ndw *NestedDocumentWrapper) buildFilterClausesForAgg(aggName string, query
 	return result
 }
 
-// extractPropertyFromQuery attempts to extract the property name from a query clause.
-// This is used to determine which filter belongs to which property for disjunctive mode.
+// extractPropertyFromQuery extracts the property name from a query clause for
+// determining filter ownership in disjunctive mode.
 func (ndw *NestedDocumentWrapper) extractPropertyFromQuery(query types.Query) string {
 	// Handle term queries (from DynamicFilterFeature)
 	if query.Term != nil {
