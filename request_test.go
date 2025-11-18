@@ -46,7 +46,7 @@ func Test_IsRangeValue(t *testing.T) {
 		{NewParameter("param", "1"), false},
 		{NewParameter("param."+RangeMinParameterName, "1"), true},
 		{NewParameter("param."+RangeMaxParameterName, "1"), true},
-		{NewParameter("param."+RangeMinParameterName, "random-string"), false},
+		{NewParameter("param."+RangeMinParameterName, "random-string"), true},
 	}
 
 	for _, tt := range table {
