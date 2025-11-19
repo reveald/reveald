@@ -382,20 +382,20 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 		err = ep.Register(
 			featureset.NewNestedDocumentWrapper(
 				"reviews",
-				featureset.NewHistogramFeature(
+				featureset.WithFeature(featureset.NewHistogramFeature(
 					"reviews.rating",
 					featureset.WithInterval(1),
 					featureset.WithoutZeroBucket(),
-				),
-				featureset.NewDynamicFilterFeature("reviews.author"),
-				featureset.NewDateHistogramFeature(
+				)),
+				featureset.WithFeature(featureset.NewDynamicFilterFeature("reviews.author")),
+				featureset.WithFeature(featureset.NewDateHistogramFeature(
 					"reviews.date",
 					featureset.Day,
 					featureset.WithCalendarInterval("day"),
 					featureset.WithDateFormat("strict_date"),
 					featureset.WithCalendarIntervalInstead(),
-				),
-				featureset.NewDynamicBooleanFilterFeature("reviews.verified"),
+				)),
+				featureset.WithFeature(featureset.NewDynamicBooleanFilterFeature("reviews.verified")),
 			),
 			featureset.NewDynamicFilterFeature("category"),
 			featureset.NewDynamicBooleanFilterFeature("active"),
@@ -483,6 +483,72 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 					aggBucket, ok := res.Aggregations[aggName]
 					require.True(t, ok, fmt.Sprintf("Expected aggregation '%s' to be present", aggName))
 					assert.Len(t, aggBucket, expectedCount, aggName)
+				}
+			})
+		}
+	})
+
+	t.Run("NestedFeatureWithInnerHits", func(t *testing.T) {
+		ctx := context.Background()
+
+		ep := reveald.NewEndpoint(backend, reveald.WithIndices(testIndex))
+
+		err = ep.Register(
+			featureset.NewNestedDocumentWrapper(
+				"reviews",
+				featureset.WithInnerHits(),
+				featureset.WithFeature(featureset.NewDynamicFilterFeature("reviews.author")),
+			),
+		)
+		require.NoError(t, err, "Failed to register features")
+
+		testCases := []struct {
+			name              string
+			params            []reveald.Parameter
+			expectedHits      int
+			expectedInnerHits bool
+			validateInnerHits func(t *testing.T, innerHits map[string][]map[string]any)
+		}{
+			{
+				name: "Filter on nested field with inner hits",
+				params: []reveald.Parameter{
+					reveald.NewParameter("reviews.author", "Kevin White"),
+				},
+				expectedHits:      2,
+				expectedInnerHits: true,
+				validateInnerHits: func(t *testing.T, innerHits map[string][]map[string]any) {
+					reviewsInnerHits, ok := innerHits["reviews"]
+					require.True(t, ok, "Expected 'reviews' key in inner hits")
+					require.NotEmpty(t, reviewsInnerHits, "Expected reviews inner hits to contain data")
+
+					// Verify the inner hits contain the filtered review data
+					for _, review := range reviewsInnerHits {
+						author, ok := review["author"]
+						require.True(t, ok, "Expected 'author' field in inner hit")
+						assert.Equal(t, "Kevin White", author, "Expected author to be Kevin White")
+					}
+				},
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				req := reveald.NewRequest(tc.params...)
+				res, err := ep.Execute(ctx, req)
+				require.NoError(t, err)
+				assert.Len(t, res.Hits, tc.expectedHits)
+
+				if tc.expectedInnerHits {
+					// Verify inner hits are present
+					for _, hit := range res.Hits {
+						innerHits, ok := hit["_inner_hits"].(map[string][]map[string]any)
+						require.True(t, ok, "Expected _inner_hits to be present in hit")
+						require.NotEmpty(t, innerHits, "Expected inner hits to contain data")
+
+						if tc.validateInnerHits != nil {
+							tc.validateInnerHits(t, innerHits)
+						}
+					}
 				}
 			})
 		}

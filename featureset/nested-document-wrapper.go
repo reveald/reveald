@@ -15,22 +15,57 @@ import (
 // Example:
 //
 //	wrapper := featureset.NewNestedDocumentWrapper("items",
-//	    featureset.NewDynamicFilterFeature("items.category"),
-//	    featureset.NewDynamicFilterFeature("items.tags"),
+//	    featureset.WithInnerHits(),
+//	    featureset.WithFeature(featureset.NewDynamicFilterFeature("items.category")),
+//	    featureset.WithFeature(featureset.NewDynamicFilterFeature("items.tags")),
 //	)
 type NestedDocumentWrapper struct {
-	path     string
-	features []reveald.Feature
+	path            string
+	features        []reveald.Feature
+	innerHitsConfig *types.InnerHits
+}
+
+// NestedDocumentWrapperOption is a functional option for configuring NestedDocumentWrapper
+type NestedDocumentWrapperOption func(*NestedDocumentWrapper)
+
+// WithFeature adds a feature to the nested document wrapper.
+func WithFeature(feature reveald.Feature) NestedDocumentWrapperOption {
+	return func(ndw *NestedDocumentWrapper) {
+		ndw.features = append(ndw.features, feature)
+	}
+}
+
+// WithInnerHits enables inner hits for the nested query, allowing access to the nested
+// documents that matched the query.
+func WithInnerHits() NestedDocumentWrapperOption {
+	return func(ndw *NestedDocumentWrapper) {
+		ndw.innerHitsConfig = &types.InnerHits{}
+	}
+}
+
+// WithInnerHitsConfig enables inner hits with custom configuration.
+func WithInnerHitsConfig(config *types.InnerHits) NestedDocumentWrapperOption {
+	return func(ndw *NestedDocumentWrapper) {
+		ndw.innerHitsConfig = config
+	}
 }
 
 // NewNestedDocumentWrapper creates a nested document wrapper for the specified path.
 // The path should be the nested field path (e.g., "items"), and features should
 // operate on fields within that nested path.
-func NewNestedDocumentWrapper(path string, features ...reveald.Feature) *NestedDocumentWrapper {
-	return &NestedDocumentWrapper{
+// Options can be passed to configure inner hits and other settings.
+func NewNestedDocumentWrapper(path string, opts ...NestedDocumentWrapperOption) *NestedDocumentWrapper {
+	ndw := &NestedDocumentWrapper{
 		path:     path,
-		features: features,
+		features: []reveald.Feature{},
 	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(ndw)
+	}
+
+	return ndw
 }
 
 // Process implements the Feature interface, wrapping child feature queries and
@@ -61,8 +96,9 @@ func (ndw *NestedDocumentWrapper) wrapAndApplyToMainBuilder(builtReq *search.Req
 	if builtReq.Query != nil && builtReq.Query.Bool != nil && len(builtReq.Query.Bool.Must) > 0 {
 		nestedQuery := types.Query{
 			Nested: &types.NestedQuery{
-				Path:  ndw.path,
-				Query: *builtReq.Query,
+				Path:      ndw.path,
+				Query:     *builtReq.Query,
+				InnerHits: ndw.innerHitsConfig,
 			},
 		}
 		mainBuilder.With(nestedQuery)
@@ -70,8 +106,7 @@ func (ndw *NestedDocumentWrapper) wrapAndApplyToMainBuilder(builtReq *search.Req
 
 	// Wrap each aggregation
 	for aggName, agg := range builtReq.Aggregations {
-		// Build filter clauses (conjunctive vs disjunctive)
-		filterClauses := ndw.buildFilterClausesForAgg(aggName, builtReq.Query)
+		filterClauses := ndw.buildFilterClausesForAgg(builtReq.Query)
 
 		wrappedAgg := types.Aggregations{
 			Nested: &types.NestedAggregation{Path: &ndw.path},
@@ -173,7 +208,7 @@ func (ndw *NestedDocumentWrapper) unwrapNestedAggregation(aggName string, rawAgg
 
 // buildFilterClausesForAgg builds filter clauses for an aggregation.
 // All filters are included (conjunctive mode).
-func (ndw *NestedDocumentWrapper) buildFilterClausesForAgg(aggName string, query *types.Query) []types.Query {
+func (ndw *NestedDocumentWrapper) buildFilterClausesForAgg(query *types.Query) []types.Query {
 	if query == nil || query.Bool == nil {
 		return nil
 	}

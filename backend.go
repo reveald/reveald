@@ -288,6 +288,31 @@ func mapSearchResult(res search.Response, req *QueryBuilder) (*Result, error) {
 				}
 			}
 
+			// Process inner hits if present
+			if len(hit.InnerHits) > 0 {
+				innerHitsMap := make(map[string][]map[string]any)
+				for name, innerHitsResult := range hit.InnerHits {
+					var innerHitsList []map[string]any
+					for _, innerHit := range innerHitsResult.Hits.Hits {
+						innerB, innerErr := json.Marshal(innerHit.Source_)
+						if innerErr != nil {
+							continue
+						}
+						var innerSource map[string]any
+						if innerErr := json.Unmarshal(innerB, &innerSource); innerErr != nil {
+							continue
+						}
+						innerHitsList = append(innerHitsList, innerSource)
+					}
+					if len(innerHitsList) > 0 {
+						innerHitsMap[name] = innerHitsList
+					}
+				}
+				if len(innerHitsMap) > 0 {
+					source["_inner_hits"] = innerHitsMap
+				}
+			}
+
 			hits = append(hits, source)
 		}
 	}
