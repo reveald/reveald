@@ -382,20 +382,22 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 		err = ep.Register(
 			featureset.NewNestedDocumentWrapper(
 				"reviews",
-				featureset.NewHistogramFeature(
-					"reviews.rating",
-					featureset.WithInterval(1),
-					featureset.WithoutZeroBucket(),
+				featureset.WithFeatures(
+					featureset.NewHistogramFeature(
+						"reviews.rating",
+						featureset.WithInterval(1),
+						featureset.WithoutZeroBucket(),
+					),
+					featureset.NewDynamicFilterFeature("reviews.author"),
+					featureset.NewDateHistogramFeature(
+						"reviews.date",
+						featureset.Day,
+						featureset.WithCalendarInterval("day"),
+						featureset.WithDateFormat("strict_date"),
+						featureset.WithCalendarIntervalInstead(),
+					),
+					featureset.NewDynamicBooleanFilterFeature("reviews.verified"),
 				),
-				featureset.NewDynamicFilterFeature("reviews.author"),
-				featureset.NewDateHistogramFeature(
-					"reviews.date",
-					featureset.Day,
-					featureset.WithCalendarInterval("day"),
-					featureset.WithDateFormat("strict_date"),
-					featureset.WithCalendarIntervalInstead(),
-				),
-				featureset.NewDynamicBooleanFilterFeature("reviews.verified"),
 			),
 			featureset.NewDynamicFilterFeature("category"),
 			featureset.NewDynamicBooleanFilterFeature("active"),
@@ -483,6 +485,229 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 					aggBucket, ok := res.Aggregations[aggName]
 					require.True(t, ok, fmt.Sprintf("Expected aggregation '%s' to be present", aggName))
 					assert.Len(t, aggBucket, expectedCount, aggName)
+				}
+			})
+		}
+	})
+
+	t.Run("NestedFeatureWithInnerHits", func(t *testing.T) {
+		ctx := context.Background()
+
+		ep := reveald.NewEndpoint(backend, reveald.WithIndices(testIndex))
+
+		err = ep.Register(
+			featureset.NewNestedDocumentWrapper(
+				"reviews",
+				featureset.WithInnerHits(),
+				featureset.WithFeatures(
+					featureset.NewDynamicFilterFeature("reviews.author"),
+					featureset.NewDynamicBooleanFilterFeature("reviews.verified"),
+				),
+			),
+		)
+		require.NoError(t, err, "Failed to register features")
+
+		testCases := []struct {
+			name                    string
+			params                  []reveald.Parameter
+			expectedHits            int
+			expectedInnerHitsPath   string
+			expectedInnerHitsField  string
+			expectedInnerHitsValue  string
+			expectedMinInnerHits    int
+			expectedInnerHitsPerHit map[string]int // map of hit title to expected inner hits count
+		}{
+			{
+				name: "Filter on nested field with inner hits",
+				params: []reveald.Parameter{
+					reveald.NewParameter("reviews.author", "Kevin White"),
+				},
+				expectedHits:           2,
+				expectedInnerHitsPath:  "reviews",
+				expectedInnerHitsField: "author",
+				expectedInnerHitsValue: "Kevin White",
+				expectedMinInnerHits:   1,
+			},
+			{
+				name: "Filter on verified reviews returns multiple inner hits per document",
+				params: []reveald.Parameter{
+					reveald.NewParameter("reviews.verified", "true"),
+				},
+				expectedHits:          5,
+				expectedInnerHitsPath: "reviews",
+				expectedMinInnerHits:  1,
+				expectedInnerHitsPerHit: map[string]int{
+					"Product 1": 2, // Sarah Johnson and Mike Chen
+					"Product 2": 2, // David Park and Emma Wilson
+					"Product 3": 3, // Robert Martinez, Jennifer Lee, Amy Davis
+					"Product 4": 2, // Kevin White and Rachel Green
+					"Product 5": 2, // Kevin White and Steve Rodriguez
+				},
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				req := reveald.NewRequest(tc.params...)
+				res, err := ep.Execute(ctx, req)
+				require.NoError(t, err)
+				assert.Len(t, res.Hits, tc.expectedHits)
+
+				// Verify inner hits are present
+				for _, hit := range res.Hits {
+					innerHits, ok := hit["_inner_hits"].(map[string][]map[string]any)
+					require.True(t, ok, "Expected _inner_hits to be present in hit")
+					require.NotEmpty(t, innerHits, "Expected inner hits to contain data")
+
+					// Check that the nested path is present
+					nestedInnerHits, ok := innerHits[tc.expectedInnerHitsPath]
+					require.True(t, ok, fmt.Sprintf("Expected '%s' key in inner hits", tc.expectedInnerHitsPath))
+					require.NotEmpty(t, nestedInnerHits, fmt.Sprintf("Expected %s inner hits to contain data", tc.expectedInnerHitsPath))
+
+					// Verify we have at least the minimum expected inner hits
+					assert.GreaterOrEqual(t, len(nestedInnerHits), tc.expectedMinInnerHits,
+						fmt.Sprintf("Expected at least %d inner hits", tc.expectedMinInnerHits))
+
+					// If we have specific expectations per hit, validate those
+					if tc.expectedInnerHitsPerHit != nil {
+						hitTitle, ok := hit["title"].(string)
+						require.True(t, ok, "Expected 'title' field in hit")
+
+						if expectedCount, exists := tc.expectedInnerHitsPerHit[hitTitle]; exists {
+							assert.Equal(t, expectedCount, len(nestedInnerHits),
+								fmt.Sprintf("Expected %d inner hits for '%s'", expectedCount, hitTitle))
+						}
+					}
+
+					// Verify the inner hits contain the expected field and value (if specified)
+					if tc.expectedInnerHitsField != "" && tc.expectedInnerHitsValue != "" {
+						for _, innerHit := range nestedInnerHits {
+							fieldValue, ok := innerHit[tc.expectedInnerHitsField]
+							require.True(t, ok, fmt.Sprintf("Expected '%s' field in inner hit", tc.expectedInnerHitsField))
+							assert.Equal(t, tc.expectedInnerHitsValue, fieldValue, fmt.Sprintf("Expected %s to be %s", tc.expectedInnerHitsField, tc.expectedInnerHitsValue))
+						}
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("NestedFeatureWithDisjunctiveAggregations", func(t *testing.T) {
+		ctx := context.Background()
+
+		ep := reveald.NewEndpoint(backend, reveald.WithIndices(testIndex))
+
+		err = ep.Register(
+			featureset.NewNestedDocumentWrapper(
+				"reviews",
+				featureset.WithDisjunctiveAggregations(),
+				featureset.WithFeatures(
+					featureset.NewDynamicFilterFeature("reviews.author", featureset.WithAggregationSize(20)),
+					featureset.NewDynamicBooleanFilterFeature("reviews.verified"),
+				),
+			),
+		)
+		require.NoError(t, err, "Failed to register features")
+
+		testCases := []struct {
+			name         string
+			params       []reveald.Parameter
+			expectedHits int
+			expectedAggs map[string]int
+			description  string
+		}{
+			{
+				name: "Filter by author shows all authors from matching documents",
+				params: []reveald.Parameter{
+					reveald.NewParameter("reviews.author", "Kevin White"),
+				},
+				expectedHits: 2,
+				// With disjunctive mode, filtering by Kevin White:
+				// - reviews.author agg excludes the author filter, showing all authors from all documents
+				// - reviews.verified agg keeps the author filter, showing only Kevin White's verified states
+				expectedAggs: map[string]int{
+					"reviews.author":   13, // Kevin White, Rachel Green, Nicole Garcia, Steve Rodriguez
+					"reviews.verified": 2,  // Kevin White's verified states (true, false)
+				},
+				description: "Author agg shows all authors from docs with Kevin White, verified agg shows Kevin's states",
+			},
+			{
+				name: "Filter by verified shows authors from verified reviews",
+				params: []reveald.Parameter{
+					reveald.NewParameter("reviews.verified", "true"),
+				},
+				expectedHits: 5,
+				// With disjunctive mode, filtering by verified=true:
+				// - Document-level filter: returns 5 products that have at least one verified review
+				// - reviews.author agg: excludes author filter (none applied), keeps verified filter, showing authors with verified reviews
+				// - reviews.verified agg: excludes its own filter, showing all verified states from all documents
+				expectedAggs: map[string]int{
+					"reviews.author":   10, // Authors with verified reviews across all documents
+					"reviews.verified": 2,  // true and false options from all documents
+				},
+				description: "Author agg keeps verified filter, showing only verified authors",
+			},
+			{
+				name: "Filter by author AND verified shows expanded options",
+				params: []reveald.Parameter{
+					reveald.NewParameter("reviews.author", "Nicole Garcia"),
+					reveald.NewParameter("reviews.verified", "false"),
+				},
+				expectedHits: 1,
+				// With disjunctive mode:
+				// - reviews.author agg excludes author filter but keeps verified=false, showing all authors with unverified reviews from all documents
+				// - reviews.verified agg excludes verified filter but keeps author filter, showing verified states from documents with Nicole Garcia
+				expectedAggs: map[string]int{
+					"reviews.author":   3, // All authors with unverified reviews across all documents (Lisa Anderson, Tom Brown, Nicole Garcia)
+					"reviews.verified": 2, // Both true and false (FiltersAggregation always returns all buckets, Nicole Garcia only has false though)
+				},
+				description: "Each aggregation excludes its own filter but respects others",
+			},
+			{
+				name: "Filter by three authors shows all authors from all documents",
+				params: []reveald.Parameter{
+					reveald.NewParameter("reviews.author", "Kevin White"),
+					reveald.NewParameter("reviews.author", "Sarah Johnson"),
+					reveald.NewParameter("reviews.author", "Jennifer Lee"),
+				},
+				expectedHits: 4,
+				// With disjunctive mode, filtering by three authors (Kevin White, Sarah Johnson, Jennifer Lee):
+				// - Document-level filter: returns 4 products that have reviews from any of these authors
+				//   Product 1 (Sarah Johnson), Product 3 (Jennifer Lee), Product 4 (Kevin White), Product 5 (Kevin White)
+				// - reviews.author agg excludes the author filter entirely, showing ALL authors from ALL 5 documents
+				//   Product 1: Sarah Johnson, Mike Chen, Lisa Anderson
+				//   Product 2: David Park, Emma Wilson
+				//   Product 3: Robert Martinez, Jennifer Lee, Tom Brown, Amy Davis
+				//   Product 4: Kevin White, Rachel Green
+				//   Product 5: Kevin White, Nicole Garcia, Steve Rodriguez
+				expectedAggs: map[string]int{
+					"reviews.author":   13, // All unique authors from all 5 products in the index
+					"reviews.verified": 2,  // Both true and false states from all documents
+				},
+				description: "Author agg excludes author filter, showing all authors from all documents",
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				req := reveald.NewRequest(tc.params...)
+				res, err := ep.Execute(ctx, req)
+				require.NoError(t, err)
+				assert.Len(t, res.Hits, tc.expectedHits)
+
+				for aggName, expectedCount := range tc.expectedAggs {
+					aggBucket, ok := res.Aggregations[aggName]
+					require.True(t, ok, fmt.Sprintf("Expected aggregation '%s' to be present", aggName))
+
+					// Debug output
+					if len(aggBucket) != expectedCount {
+						t.Logf("Aggregation %s buckets:", aggName)
+						for _, bucket := range aggBucket {
+							t.Logf("  - %v (count: %d)", bucket.Value, bucket.HitCount)
+						}
+					}
+
+					assert.Len(t, aggBucket, expectedCount, fmt.Sprintf("%s - %s", tc.description, aggName))
 				}
 			})
 		}
