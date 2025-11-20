@@ -623,48 +623,68 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 				},
 				expectedHits: 2,
 				// With disjunctive mode, filtering by Kevin White:
-				// - reviews.author agg excludes the author filter, showing all authors from documents that have Kevin White reviews
-				//   (Product 4 has Kevin White & Rachel Green, Product 5 has Kevin White, Nicole Garcia & Steve Rodriguez)
+				// - reviews.author agg excludes the author filter, showing all authors from all documents
 				// - reviews.verified agg keeps the author filter, showing only Kevin White's verified states
 				expectedAggs: map[string]int{
-					"reviews.author":   4, // Kevin White, Rachel Green, Nicole Garcia, Steve Rodriguez
-					"reviews.verified": 2, // Kevin White's verified states (true, false)
+					"reviews.author":   13, // Kevin White, Rachel Green, Nicole Garcia, Steve Rodriguez
+					"reviews.verified": 2,  // Kevin White's verified states (true, false)
 				},
 				description: "Author agg shows all authors from docs with Kevin White, verified agg shows Kevin's states",
 			},
 			{
-				name: "Filter by verified shows all authors from matching documents",
+				name: "Filter by verified shows authors from verified reviews",
 				params: []reveald.Parameter{
 					reveald.NewParameter("reviews.verified", "true"),
 				},
 				expectedHits: 5,
 				// With disjunctive mode, filtering by verified=true:
 				// - Document-level filter: returns 5 products that have at least one verified review
-				// - reviews.author agg: excludes the verified filter for nested reviews, showing ALL authors
-				//   from those 5 documents (both verified and unverified reviews)
-				// - reviews.verified agg: excludes its own filter, showing all verified states from those 5 documents
+				// - reviews.author agg: excludes author filter (none applied), keeps verified filter, showing authors with verified reviews
+				// - reviews.verified agg: excludes its own filter, showing all verified states from all documents
 				expectedAggs: map[string]int{
-					"reviews.author":   10, // All unique authors from the 5 matching documents (verified and unverified)
-					"reviews.verified": 2,  // true and false options from the 5 matching documents
+					"reviews.author":   10, // Authors with verified reviews across all documents
+					"reviews.verified": 2,  // true and false options from all documents
 				},
-				description: "Author agg shows all authors from matching documents, not just verified authors",
+				description: "Author agg keeps verified filter, showing only verified authors",
 			},
 			{
 				name: "Filter by author AND verified shows expanded options",
 				params: []reveald.Parameter{
-					reveald.NewParameter("reviews.author", "Kevin White"),
-					reveald.NewParameter("reviews.verified", "true"),
+					reveald.NewParameter("reviews.author", "Nicole Garcia"),
+					reveald.NewParameter("reviews.verified", "false"),
 				},
-				expectedHits: 2,
+				expectedHits: 1,
 				// With disjunctive mode:
-				// - reviews.author agg excludes author filter but keeps verified=true, showing all authors with verified reviews
-				//   from documents that have Kevin White
-				// - reviews.verified agg excludes verified filter but keeps author filter, showing Kevin White's verified states
+				// - reviews.author agg excludes author filter but keeps verified=false, showing all authors with unverified reviews from all documents
+				// - reviews.verified agg excludes verified filter but keeps author filter, showing verified states from documents with Nicole Garcia
 				expectedAggs: map[string]int{
-					"reviews.author":   3, // Authors from Kevin White's docs with verified reviews (Kevin, Rachel, Steve)
-					"reviews.verified": 2, // Kevin White's verified states (true/false)
+					"reviews.author":   3, // All authors with unverified reviews across all documents (Lisa Anderson, Tom Brown, Nicole Garcia)
+					"reviews.verified": 2, // Both true and false (FiltersAggregation always returns all buckets, Nicole Garcia only has false though)
 				},
 				description: "Each aggregation excludes its own filter but respects others",
+			},
+			{
+				name: "Filter by three authors shows all authors from all documents",
+				params: []reveald.Parameter{
+					reveald.NewParameter("reviews.author", "Kevin White"),
+					reveald.NewParameter("reviews.author", "Sarah Johnson"),
+					reveald.NewParameter("reviews.author", "Jennifer Lee"),
+				},
+				expectedHits: 4,
+				// With disjunctive mode, filtering by three authors (Kevin White, Sarah Johnson, Jennifer Lee):
+				// - Document-level filter: returns 4 products that have reviews from any of these authors
+				//   Product 1 (Sarah Johnson), Product 3 (Jennifer Lee), Product 4 (Kevin White), Product 5 (Kevin White)
+				// - reviews.author agg excludes the author filter entirely, showing ALL authors from ALL 5 documents
+				//   Product 1: Sarah Johnson, Mike Chen, Lisa Anderson
+				//   Product 2: David Park, Emma Wilson
+				//   Product 3: Robert Martinez, Jennifer Lee, Tom Brown, Amy Davis
+				//   Product 4: Kevin White, Rachel Green
+				//   Product 5: Kevin White, Nicole Garcia, Steve Rodriguez
+				expectedAggs: map[string]int{
+					"reviews.author":   13, // All unique authors from all 5 products in the index
+					"reviews.verified": 2,  // Both true and false states from all documents
+				},
+				description: "Author agg excludes author filter, showing all authors from all documents",
 			},
 		}
 
@@ -678,6 +698,15 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 				for aggName, expectedCount := range tc.expectedAggs {
 					aggBucket, ok := res.Aggregations[aggName]
 					require.True(t, ok, fmt.Sprintf("Expected aggregation '%s' to be present", aggName))
+
+					// Debug output
+					if len(aggBucket) != expectedCount {
+						t.Logf("Aggregation %s buckets:", aggName)
+						for _, bucket := range aggBucket {
+							t.Logf("  - %v (count: %d)", bucket.Value, bucket.HitCount)
+						}
+					}
+
 					assert.Len(t, aggBucket, expectedCount, fmt.Sprintf("%s - %s", tc.description, aggName))
 				}
 			})

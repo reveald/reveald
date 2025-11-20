@@ -125,17 +125,42 @@ func (ndw *NestedDocumentWrapper) wrapAndApplyToMainBuilder(builtReq *search.Req
 	for aggName, agg := range builtReq.Aggregations {
 		filterClauses := ndw.buildFilterClausesForAgg(aggName, builtReq.Query)
 
-		wrappedAgg := types.Aggregations{
-			Nested: &types.NestedAggregation{Path: &ndw.path},
-			Aggregations: map[string]types.Aggregations{
-				aggName + "._filter": {
-					Filter: &types.Query{Bool: &types.BoolQuery{Must: filterClauses}},
-					Aggregations: map[string]types.Aggregations{
-						aggName: agg,
+		var wrappedAgg types.Aggregations
+
+		if ndw.disjunctive {
+			// In disjunctive mode, use global aggregation to include all documents,
+			// then apply nested and filter scopes
+			wrappedAgg = types.Aggregations{
+				Global: &types.GlobalAggregation{},
+				Aggregations: map[string]types.Aggregations{
+					aggName + "._nested": {
+						Nested: &types.NestedAggregation{Path: &ndw.path},
+						Aggregations: map[string]types.Aggregations{
+							aggName + "._filter": {
+								Filter: &types.Query{Bool: &types.BoolQuery{Must: filterClauses}},
+								Aggregations: map[string]types.Aggregations{
+									aggName: agg,
+								},
+							},
+						},
 					},
 				},
-			},
+			}
+		} else {
+			// In conjunctive mode, just use nested and filter
+			wrappedAgg = types.Aggregations{
+				Nested: &types.NestedAggregation{Path: &ndw.path},
+				Aggregations: map[string]types.Aggregations{
+					aggName + "._filter": {
+						Filter: &types.Query{Bool: &types.BoolQuery{Must: filterClauses}},
+						Aggregations: map[string]types.Aggregations{
+							aggName: agg,
+						},
+					},
+				},
+			}
 		}
+
 		mainBuilder.Aggregation(aggName, wrappedAgg)
 	}
 }
@@ -190,17 +215,41 @@ func (ndw *NestedDocumentWrapper) isOurAggregation(aggName string) bool {
 	return strings.HasPrefix(aggName, ndw.path+".")
 }
 
-// unwrapNestedAggregation extracts inner aggregation from: nested -> filter -> innerAgg
+// unwrapNestedAggregation extracts inner aggregation from:
+// - Disjunctive mode: global -> nested -> filter -> innerAgg
+// - Conjunctive mode: nested -> filter -> innerAgg
 func (ndw *NestedDocumentWrapper) unwrapNestedAggregation(aggName string, rawAggs map[string]types.Aggregate) types.Aggregate {
 	raw, ok := rawAggs[aggName]
 	if !ok {
 		return nil
 	}
 
-	// Step 1: Unwrap nested aggregation
-	nestedAgg, ok := raw.(*types.NestedAggregate)
-	if !ok || nestedAgg == nil {
-		return nil
+	var nestedAgg *types.NestedAggregate
+
+	if ndw.disjunctive {
+		// Step 1a: Unwrap global aggregation
+		globalAgg, ok := raw.(*types.GlobalAggregate)
+		if !ok || globalAgg == nil {
+			return nil
+		}
+
+		// Step 1b: Get nested aggregation from within global
+		nestedNode, ok := globalAgg.Aggregations[aggName+"._nested"]
+		if !ok || nestedNode == nil {
+			return nil
+		}
+
+		nestedAgg, ok = nestedNode.(*types.NestedAggregate)
+		if !ok || nestedAgg == nil {
+			return nil
+		}
+	} else {
+		// Step 1: Unwrap nested aggregation directly
+		var ok bool
+		nestedAgg, ok = raw.(*types.NestedAggregate)
+		if !ok || nestedAgg == nil {
+			return nil
+		}
 	}
 
 	// Step 2: Get filter aggregation
@@ -240,7 +289,8 @@ func (ndw *NestedDocumentWrapper) buildFilterClausesForAgg(aggName string, query
 	var filterClauses []types.Query
 	for _, mustClause := range query.Bool.Must {
 		// Check if this filter is for the current aggregation
-		if !ndw.isFilterForAggregation(aggName, mustClause) {
+		isForThisAgg := ndw.isFilterForAggregation(aggName, mustClause)
+		if !isForThisAgg {
 			filterClauses = append(filterClauses, mustClause)
 		}
 	}
@@ -284,6 +334,16 @@ func (ndw *NestedDocumentWrapper) matchesAggregationField(aggName string, query 
 		for field := range query.Term {
 			// Check both with and without .keyword suffix
 			if field == aggName || field == aggName+".keyword" {
+				return true
+			}
+		}
+	}
+
+	// Check bool queries with should clauses (used for multi-value filters)
+	if query.Bool != nil && len(query.Bool.Should) > 0 {
+		// Check if any should clause matches the aggregation field
+		for _, shouldClause := range query.Bool.Should {
+			if ndw.matchesAggregationField(aggName, shouldClause) {
 				return true
 			}
 		}
