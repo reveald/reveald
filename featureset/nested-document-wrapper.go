@@ -29,9 +29,9 @@ type NestedDocumentWrapper struct {
 type NestedDocumentWrapperOption func(*NestedDocumentWrapper)
 
 // WithFeature adds a feature to the nested document wrapper.
-func WithFeature(feature reveald.Feature) NestedDocumentWrapperOption {
+func WithFeatures(features ...reveald.Feature) NestedDocumentWrapperOption {
 	return func(ndw *NestedDocumentWrapper) {
-		ndw.features = append(ndw.features, feature)
+		ndw.features = append(ndw.features, features...)
 	}
 }
 

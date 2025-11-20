@@ -382,20 +382,22 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 		err = ep.Register(
 			featureset.NewNestedDocumentWrapper(
 				"reviews",
-				featureset.WithFeature(featureset.NewHistogramFeature(
-					"reviews.rating",
-					featureset.WithInterval(1),
-					featureset.WithoutZeroBucket(),
-				)),
-				featureset.WithFeature(featureset.NewDynamicFilterFeature("reviews.author")),
-				featureset.WithFeature(featureset.NewDateHistogramFeature(
-					"reviews.date",
-					featureset.Day,
-					featureset.WithCalendarInterval("day"),
-					featureset.WithDateFormat("strict_date"),
-					featureset.WithCalendarIntervalInstead(),
-				)),
-				featureset.WithFeature(featureset.NewDynamicBooleanFilterFeature("reviews.verified")),
+				featureset.WithFeatures(
+					featureset.NewHistogramFeature(
+						"reviews.rating",
+						featureset.WithInterval(1),
+						featureset.WithoutZeroBucket(),
+					),
+					featureset.NewDynamicFilterFeature("reviews.author"),
+					featureset.NewDateHistogramFeature(
+						"reviews.date",
+						featureset.Day,
+						featureset.WithCalendarInterval("day"),
+						featureset.WithDateFormat("strict_date"),
+						featureset.WithCalendarIntervalInstead(),
+					),
+					featureset.NewDynamicBooleanFilterFeature("reviews.verified"),
+				),
 			),
 			featureset.NewDynamicFilterFeature("category"),
 			featureset.NewDynamicBooleanFilterFeature("active"),
@@ -497,36 +499,49 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 			featureset.NewNestedDocumentWrapper(
 				"reviews",
 				featureset.WithInnerHits(),
-				featureset.WithFeature(featureset.NewDynamicFilterFeature("reviews.author")),
+				featureset.WithFeatures(
+					featureset.NewDynamicFilterFeature("reviews.author"),
+					featureset.NewDynamicBooleanFilterFeature("reviews.verified"),
+				),
 			),
 		)
 		require.NoError(t, err, "Failed to register features")
 
 		testCases := []struct {
-			name              string
-			params            []reveald.Parameter
-			expectedHits      int
-			expectedInnerHits bool
-			validateInnerHits func(t *testing.T, innerHits map[string][]map[string]any)
+			name                    string
+			params                  []reveald.Parameter
+			expectedHits            int
+			expectedInnerHitsPath   string
+			expectedInnerHitsField  string
+			expectedInnerHitsValue  string
+			expectedMinInnerHits    int
+			expectedInnerHitsPerHit map[string]int // map of hit title to expected inner hits count
 		}{
 			{
 				name: "Filter on nested field with inner hits",
 				params: []reveald.Parameter{
 					reveald.NewParameter("reviews.author", "Kevin White"),
 				},
-				expectedHits:      2,
-				expectedInnerHits: true,
-				validateInnerHits: func(t *testing.T, innerHits map[string][]map[string]any) {
-					reviewsInnerHits, ok := innerHits["reviews"]
-					require.True(t, ok, "Expected 'reviews' key in inner hits")
-					require.NotEmpty(t, reviewsInnerHits, "Expected reviews inner hits to contain data")
-
-					// Verify the inner hits contain the filtered review data
-					for _, review := range reviewsInnerHits {
-						author, ok := review["author"]
-						require.True(t, ok, "Expected 'author' field in inner hit")
-						assert.Equal(t, "Kevin White", author, "Expected author to be Kevin White")
-					}
+				expectedHits:           2,
+				expectedInnerHitsPath:  "reviews",
+				expectedInnerHitsField: "author",
+				expectedInnerHitsValue: "Kevin White",
+				expectedMinInnerHits:   1,
+			},
+			{
+				name: "Filter on verified reviews returns multiple inner hits per document",
+				params: []reveald.Parameter{
+					reveald.NewParameter("reviews.verified", "true"),
+				},
+				expectedHits:          5,
+				expectedInnerHitsPath: "reviews",
+				expectedMinInnerHits:  1,
+				expectedInnerHitsPerHit: map[string]int{
+					"Product 1": 2, // Sarah Johnson and Mike Chen
+					"Product 2": 2, // David Park and Emma Wilson
+					"Product 3": 3, // Robert Martinez, Jennifer Lee, Amy Davis
+					"Product 4": 2, // Kevin White and Rachel Green
+					"Product 5": 2, // Kevin White and Steve Rodriguez
 				},
 			},
 		}
@@ -538,15 +553,38 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 				require.NoError(t, err)
 				assert.Len(t, res.Hits, tc.expectedHits)
 
-				if tc.expectedInnerHits {
-					// Verify inner hits are present
-					for _, hit := range res.Hits {
-						innerHits, ok := hit["_inner_hits"].(map[string][]map[string]any)
-						require.True(t, ok, "Expected _inner_hits to be present in hit")
-						require.NotEmpty(t, innerHits, "Expected inner hits to contain data")
+				// Verify inner hits are present
+				for _, hit := range res.Hits {
+					innerHits, ok := hit["_inner_hits"].(map[string][]map[string]any)
+					require.True(t, ok, "Expected _inner_hits to be present in hit")
+					require.NotEmpty(t, innerHits, "Expected inner hits to contain data")
 
-						if tc.validateInnerHits != nil {
-							tc.validateInnerHits(t, innerHits)
+					// Check that the nested path is present
+					nestedInnerHits, ok := innerHits[tc.expectedInnerHitsPath]
+					require.True(t, ok, fmt.Sprintf("Expected '%s' key in inner hits", tc.expectedInnerHitsPath))
+					require.NotEmpty(t, nestedInnerHits, fmt.Sprintf("Expected %s inner hits to contain data", tc.expectedInnerHitsPath))
+
+					// Verify we have at least the minimum expected inner hits
+					assert.GreaterOrEqual(t, len(nestedInnerHits), tc.expectedMinInnerHits,
+						fmt.Sprintf("Expected at least %d inner hits", tc.expectedMinInnerHits))
+
+					// If we have specific expectations per hit, validate those
+					if tc.expectedInnerHitsPerHit != nil {
+						hitTitle, ok := hit["title"].(string)
+						require.True(t, ok, "Expected 'title' field in hit")
+
+						if expectedCount, exists := tc.expectedInnerHitsPerHit[hitTitle]; exists {
+							assert.Equal(t, expectedCount, len(nestedInnerHits),
+								fmt.Sprintf("Expected %d inner hits for '%s'", expectedCount, hitTitle))
+						}
+					}
+
+					// Verify the inner hits contain the expected field and value (if specified)
+					if tc.expectedInnerHitsField != "" && tc.expectedInnerHitsValue != "" {
+						for _, innerHit := range nestedInnerHits {
+							fieldValue, ok := innerHit[tc.expectedInnerHitsField]
+							require.True(t, ok, fmt.Sprintf("Expected '%s' field in inner hit", tc.expectedInnerHitsField))
+							assert.Equal(t, tc.expectedInnerHitsValue, fieldValue, fmt.Sprintf("Expected %s to be %s", tc.expectedInnerHitsField, tc.expectedInnerHitsValue))
 						}
 					}
 				}
