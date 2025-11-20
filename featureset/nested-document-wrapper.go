@@ -23,6 +23,7 @@ type NestedDocumentWrapper struct {
 	path            string
 	features        []reveald.Feature
 	innerHitsConfig *types.InnerHits
+	disjunctive     bool
 }
 
 // NestedDocumentWrapperOption is a functional option for configuring NestedDocumentWrapper
@@ -47,6 +48,22 @@ func WithInnerHits() NestedDocumentWrapperOption {
 func WithInnerHitsConfig(config *types.InnerHits) NestedDocumentWrapperOption {
 	return func(ndw *NestedDocumentWrapper) {
 		ndw.innerHitsConfig = config
+	}
+}
+
+// WithDisjunctiveAggregations enables disjunctive aggregations mode.
+// In disjunctive mode, each aggregation excludes its own filter but includes all other filters.
+// This allows users to see what options are available even when a filter is active.
+//
+// Example:
+//   If filtering by reviews.author="John" AND reviews.verified=true:
+//   - The reviews.author aggregation will show all authors with verified reviews (not just John)
+//   - The reviews.verified aggregation will show verified/unverified counts for John's reviews
+//
+// This is commonly used in faceted search UIs (like e-commerce filters).
+func WithDisjunctiveAggregations() NestedDocumentWrapperOption {
+	return func(ndw *NestedDocumentWrapper) {
+		ndw.disjunctive = true
 	}
 }
 
@@ -106,7 +123,7 @@ func (ndw *NestedDocumentWrapper) wrapAndApplyToMainBuilder(builtReq *search.Req
 
 	// Wrap each aggregation
 	for aggName, agg := range builtReq.Aggregations {
-		filterClauses := ndw.buildFilterClausesForAgg(builtReq.Query)
+		filterClauses := ndw.buildFilterClausesForAgg(aggName, builtReq.Query)
 
 		wrappedAgg := types.Aggregations{
 			Nested: &types.NestedAggregation{Path: &ndw.path},
@@ -207,11 +224,91 @@ func (ndw *NestedDocumentWrapper) unwrapNestedAggregation(aggName string, rawAgg
 }
 
 // buildFilterClausesForAgg builds filter clauses for an aggregation.
-// All filters are included (conjunctive mode).
-func (ndw *NestedDocumentWrapper) buildFilterClausesForAgg(query *types.Query) []types.Query {
+// In conjunctive mode: all filters are included.
+// In disjunctive mode: all filters except the one for this specific aggregation are included.
+func (ndw *NestedDocumentWrapper) buildFilterClausesForAgg(aggName string, query *types.Query) []types.Query {
 	if query == nil || query.Bool == nil {
 		return nil
 	}
 
-	return append([]types.Query{}, query.Bool.Must...)
+	// In conjunctive mode, include all filters
+	if !ndw.disjunctive {
+		return append([]types.Query{}, query.Bool.Must...)
+	}
+
+	// In disjunctive mode, exclude the filter for this specific aggregation
+	var filterClauses []types.Query
+	for _, mustClause := range query.Bool.Must {
+		// Check if this filter is for the current aggregation
+		if !ndw.isFilterForAggregation(aggName, mustClause) {
+			filterClauses = append(filterClauses, mustClause)
+		}
+	}
+
+	return filterClauses
+}
+
+// isFilterForAggregation checks if a query clause is a filter for the given aggregation name.
+// It inspects nested queries and term queries to determine if they match the aggregation field.
+func (ndw *NestedDocumentWrapper) isFilterForAggregation(aggName string, query types.Query) bool {
+	// Check if it's a nested query
+	if query.Nested != nil {
+		// For nested queries, we need to check the inner query
+		innerQuery := query.Nested.Query
+		if innerQuery.Bool != nil {
+			// Check should clauses (used for multi-value filters)
+			for _, shouldClause := range innerQuery.Bool.Should {
+				if ndw.matchesAggregationField(aggName, shouldClause) {
+					return true
+				}
+			}
+			// Check must clauses
+			for _, mustClause := range innerQuery.Bool.Must {
+				if ndw.matchesAggregationField(aggName, mustClause) {
+					return true
+				}
+			}
+		} else if ndw.matchesAggregationField(aggName, innerQuery) {
+			return true
+		}
+	}
+
+	// Check if it's a direct term query
+	return ndw.matchesAggregationField(aggName, query)
+}
+
+// matchesAggregationField checks if a query matches the aggregation field.
+func (ndw *NestedDocumentWrapper) matchesAggregationField(aggName string, query types.Query) bool {
+	// Check term queries
+	if query.Term != nil {
+		for field := range query.Term {
+			// Check both with and without .keyword suffix
+			if field == aggName || field == aggName+".keyword" {
+				return true
+			}
+		}
+	}
+
+	// Check bool queries with must_not (used for missing values)
+	if query.Bool != nil && len(query.Bool.MustNot) > 0 {
+		for _, mustNotClause := range query.Bool.MustNot {
+			if mustNotClause.Exists != nil {
+				field := mustNotClause.Exists.Field
+				if field == aggName || field == aggName+".keyword" {
+					return true
+				}
+			}
+		}
+	}
+
+	// Check range queries (for numeric/date fields)
+	if query.Range != nil {
+		for field := range query.Range {
+			if field == aggName {
+				return true
+			}
+		}
+	}
+
+	return false
 }

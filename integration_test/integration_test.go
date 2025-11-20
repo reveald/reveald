@@ -591,6 +591,98 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("NestedFeatureWithDisjunctiveAggregations", func(t *testing.T) {
+		ctx := context.Background()
+
+		ep := reveald.NewEndpoint(backend, reveald.WithIndices(testIndex))
+
+		err = ep.Register(
+			featureset.NewNestedDocumentWrapper(
+				"reviews",
+				featureset.WithDisjunctiveAggregations(),
+				featureset.WithFeatures(
+					featureset.NewDynamicFilterFeature("reviews.author", featureset.WithAggregationSize(20)),
+					featureset.NewDynamicBooleanFilterFeature("reviews.verified"),
+				),
+			),
+		)
+		require.NoError(t, err, "Failed to register features")
+
+		testCases := []struct {
+			name         string
+			params       []reveald.Parameter
+			expectedHits int
+			expectedAggs map[string]int
+			description  string
+		}{
+			{
+				name: "Filter by author shows all authors from matching documents",
+				params: []reveald.Parameter{
+					reveald.NewParameter("reviews.author", "Kevin White"),
+				},
+				expectedHits: 2,
+				// With disjunctive mode, filtering by Kevin White:
+				// - reviews.author agg excludes the author filter, showing all authors from documents that have Kevin White reviews
+				//   (Product 4 has Kevin White & Rachel Green, Product 5 has Kevin White, Nicole Garcia & Steve Rodriguez)
+				// - reviews.verified agg keeps the author filter, showing only Kevin White's verified states
+				expectedAggs: map[string]int{
+					"reviews.author":   4, // Kevin White, Rachel Green, Nicole Garcia, Steve Rodriguez
+					"reviews.verified": 2, // Kevin White's verified states (true, false)
+				},
+				description: "Author agg shows all authors from docs with Kevin White, verified agg shows Kevin's states",
+			},
+			{
+				name: "Filter by verified shows all authors from matching documents",
+				params: []reveald.Parameter{
+					reveald.NewParameter("reviews.verified", "true"),
+				},
+				expectedHits: 5,
+				// With disjunctive mode, filtering by verified=true:
+				// - Document-level filter: returns 5 products that have at least one verified review
+				// - reviews.author agg: excludes the verified filter for nested reviews, showing ALL authors
+				//   from those 5 documents (both verified and unverified reviews)
+				// - reviews.verified agg: excludes its own filter, showing all verified states from those 5 documents
+				expectedAggs: map[string]int{
+					"reviews.author":   10, // All unique authors from the 5 matching documents (verified and unverified)
+					"reviews.verified": 2,  // true and false options from the 5 matching documents
+				},
+				description: "Author agg shows all authors from matching documents, not just verified authors",
+			},
+			{
+				name: "Filter by author AND verified shows expanded options",
+				params: []reveald.Parameter{
+					reveald.NewParameter("reviews.author", "Kevin White"),
+					reveald.NewParameter("reviews.verified", "true"),
+				},
+				expectedHits: 2,
+				// With disjunctive mode:
+				// - reviews.author agg excludes author filter but keeps verified=true, showing all authors with verified reviews
+				//   from documents that have Kevin White
+				// - reviews.verified agg excludes verified filter but keeps author filter, showing Kevin White's verified states
+				expectedAggs: map[string]int{
+					"reviews.author":   3, // Authors from Kevin White's docs with verified reviews (Kevin, Rachel, Steve)
+					"reviews.verified": 2, // Kevin White's verified states (true/false)
+				},
+				description: "Each aggregation excludes its own filter but respects others",
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				req := reveald.NewRequest(tc.params...)
+				res, err := ep.Execute(ctx, req)
+				require.NoError(t, err)
+				assert.Len(t, res.Hits, tc.expectedHits)
+
+				for aggName, expectedCount := range tc.expectedAggs {
+					aggBucket, ok := res.Aggregations[aggName]
+					require.True(t, ok, fmt.Sprintf("Expected aggregation '%s' to be present", aggName))
+					assert.Len(t, aggBucket, expectedCount, fmt.Sprintf("%s - %s", tc.description, aggName))
+				}
+			})
+		}
+	})
 }
 
 func withKeywordProperty(property types.Property) types.Property {
