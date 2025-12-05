@@ -58,6 +58,19 @@ func WithFields(fields ...string) QueryFilterOption {
 	}
 }
 
+// WithFormatter sets a formatter that is used to format the parameter value
+//
+// # If not specified, the value is passed as-is
+//
+// Example:
+//
+// queryFilter := featureset.NewQueryFilterFeature(
+//
+//	featureset.WithFormatter(func(value string) string {
+//		return value + "*"
+//	})
+//
+// )
 func WithFormatter(formatter QueryFilterFormatter) QueryFilterOption {
 	return func(qff *QueryFilterFeature) {
 		qff.formatter = formatter
