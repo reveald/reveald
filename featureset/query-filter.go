@@ -18,9 +18,12 @@ import (
 //	// Use the query filter in a feature chain
 //	result, err := queryFilter.Process(builder, nextFeature)
 type QueryFilterFeature struct {
-	name   string
-	fields []string
+	name      string
+	fields    []string
+	formatter QueryFilterFormatter
 }
+
+type QueryFilterFormatter func(string) string
 
 // QueryFilterOption is a functional option for configuring a QueryFilterFeature.
 type QueryFilterOption func(*QueryFilterFeature)
@@ -52,6 +55,12 @@ func WithQueryParam(name string) QueryFilterOption {
 func WithFields(fields ...string) QueryFilterOption {
 	return func(qff *QueryFilterFeature) {
 		qff.fields = fields
+	}
+}
+
+func WithFormatter(formatter QueryFilterFormatter) QueryFilterOption {
+	return func(qff *QueryFilterFeature) {
+		qff.formatter = formatter
 	}
 }
 
@@ -98,11 +107,16 @@ func (qff *QueryFilterFeature) Process(builder *reveald.QueryBuilder, next revea
 		return next(builder)
 	}
 
+	value := v.Value()
+	if qff.formatter != nil {
+		value = qff.formatter(value)
+	}
+
 	// Create query string query directly with typed objects
 	lenient := true
 	queryStringQuery := types.Query{
 		QueryString: &types.QueryStringQuery{
-			Query:   v.Value(),
+			Query:   value,
 			Lenient: &lenient,
 		},
 	}
