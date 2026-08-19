@@ -29,6 +29,7 @@ type QueryBuilder struct {
 	runtimeFields  map[string]types.RuntimeField
 	docValueFields []types.FieldAndFormat
 	postFilter     *types.Query
+	collapse       *types.FieldCollapse
 }
 
 // NewQueryBuilder returns a new base query for a set of indices.
@@ -366,6 +367,27 @@ func (qb *QueryBuilder) WithRuntimeMappings(runtimeMappings map[string]types.Run
 	}
 }
 
+// WithCollapse sets a field collapse spec on the query.
+//
+// Field collapsing groups matching documents by the given field
+// and returns only the top hit per group (optionally with inner_hits).
+// Pass nil to clear a previously set collapse.
+//
+// Total hit count reflects matching documents, not groups
+// use a cardinality aggregation for group count
+//
+// Example:
+//
+//	builder.WithCollapse(&types.FieldCollapse{Field: "customer.id"})
+func (qb *QueryBuilder) WithCollapse(collapse *types.FieldCollapse) {
+	qb.collapse = collapse
+}
+
+// Collapse returns the currently configured field collapse spec, or nil.
+func (qb *QueryBuilder) Collapse() *types.FieldCollapse {
+	return qb.collapse
+}
+
 // DocvalueFields specifies which fields to return as doc_value_fields in the response.
 //
 // Doc value fields are returned as-is without analysis or parsing.
@@ -553,6 +575,10 @@ func (qb *QueryBuilder) BuildRequest() *search.Request {
 	// Add doc value fields if we have any
 	if len(qb.docValueFields) > 0 {
 		request.DocvalueFields = qb.docValueFields
+	}
+
+	if qb.collapse != nil {
+		request.Collapse = qb.collapse
 	}
 
 	return request

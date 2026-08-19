@@ -157,6 +157,22 @@ func Test_That_PostFilter_Adds_To_Source(t *testing.T) {
 	assert.Equal(t, expected, actual)
 }
 
+func Test_That_WithCollapse_Adds_Collapse_To_Request(t *testing.T) {
+	builder := NewQueryBuilder(nil, "idx")
+
+	collapse := &types.FieldCollapse{Field: "customer.id"}
+	builder.WithCollapse(collapse)
+
+	request := builder.BuildRequest()
+	assert.NotNil(t, request.Collapse)
+	assert.Equal(t, collapse, request.Collapse)
+
+	builder.WithCollapse(nil)
+
+	request = builder.BuildRequest()
+	assert.Nil(t, request.Collapse)
+}
+
 // Helper functions to create map representations of queries and aggregations for testing
 func termQueryToMap(property string, value any, typed bool) map[string]any {
 	if typed {

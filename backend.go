@@ -368,19 +368,10 @@ func mapSearchResult(res search.Response, req *QueryBuilder) (*Result, error) {
 //	}
 
 func (b *ElasticBackend) Execute(ctx context.Context, builder *QueryBuilder) (*Result, error) {
-	res, err := b.client.Search().
+	req := b.client.Search().
 		Index(strings.Join(builder.Indices(), ",")).
-		Query(builder.RawQuery()).
-		Size(builder.Selection().pageSize).
-		From(builder.Selection().offset).
-		Sort(builder.Selection().sort...).
-		Aggregations(builder.aggregations).
-		SourceExcludes_(builder.Selection().exclusions...).
-		SourceIncludes_(builder.Selection().inclusions...).
-		ScriptFields(builder.scriptFields).
-		DocvalueFields(builder.docValueFields...).
-		RuntimeMappings(builder.runtimeFields).
-		Do(ctx)
+		Request(builder.BuildRequest())
+	res, err := req.Do(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("elasticsearch request failed: %w", err)
 	}
