@@ -72,6 +72,11 @@ func (r *Result) Request() *Request {
 	return r.request
 }
 
+// NewResult creates a Result with the given request. Intended for use in tests.
+func NewResult(req *Request) *Result {
+	return &Result{request: req}
+}
+
 // ResultBucket is a container for aggregations.
 //
 // It represents a single bucket in an Elasticsearch aggregation result,
