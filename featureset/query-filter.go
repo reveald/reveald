@@ -2,6 +2,7 @@ package featureset
 
 import (
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types/enums/operator"
 	"github.com/reveald/reveald/v2"
 )
 
@@ -18,8 +19,9 @@ import (
 //	// Use the query filter in a feature chain
 //	result, err := queryFilter.Process(builder, nextFeature)
 type QueryFilterFeature struct {
-	name   string
-	fields []string
+	name     string
+	fields   []string
+	operator operator.Operator
 }
 
 // QueryFilterOption is a functional option for configuring a QueryFilterFeature.
@@ -55,6 +57,14 @@ func WithFields(fields ...string) QueryFilterOption {
 	}
 }
 
+// WithMatchingOperator sets how multiple terms in the query parameter are matched.
+// Use operator.And to require every term, or operator.Or to match any term.
+func WithMatchingOperator(matchingOperator operator.Operator) QueryFilterOption {
+	return func(qff *QueryFilterFeature) {
+		qff.operator = matchingOperator
+	}
+}
+
 // NewQueryFilterFeature creates a new query filter feature with the specified options.
 //
 // By default, it uses the "q" parameter and searches across all fields.
@@ -68,8 +78,9 @@ func WithFields(fields ...string) QueryFilterOption {
 //	)
 func NewQueryFilterFeature(opts ...QueryFilterOption) *QueryFilterFeature {
 	qff := &QueryFilterFeature{
-		name:   "q",
-		fields: []string{},
+		name:     "q",
+		fields:   []string{},
+		operator: operator.Or,
 	}
 
 	for _, opt := range opts {
@@ -102,8 +113,9 @@ func (qff *QueryFilterFeature) Process(builder *reveald.QueryBuilder, next revea
 	lenient := true
 	queryStringQuery := types.Query{
 		QueryString: &types.QueryStringQuery{
-			Query:   v.Value(),
-			Lenient: &lenient,
+			Query:           v.Value(),
+			Lenient:         &lenient,
+			DefaultOperator: &qff.operator,
 		},
 	}
 
