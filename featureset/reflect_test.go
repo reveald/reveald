@@ -937,7 +937,7 @@ func Test_ReflectJsonTagSkip(t *testing.T) {
 
 func Test_ReflectJsonTagDash(t *testing.T) {
 	type Data struct {
-		DashField string `json:"-," reveald:"dynamic"` // Should use "-" as field name
+		DashField string `json:"-," reveald:"dynamic"` //nolint:staticcheck // intentional literal "-" field name, not an ignore tag
 		Normal    string `json:"normal" reveald:"dynamic"`
 	}
 
