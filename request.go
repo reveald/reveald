@@ -11,6 +11,8 @@ const (
 	RangeMinParameterName string = "min"
 	// RangeMaxParameterName is the default prefix for a maximum range bound
 	RangeMaxParameterName string = "max"
+	// ExcludeParameterName is the default suffix for values that should be excluded
+	ExcludeParameterName string = "not"
 )
 
 // Parameter is used for filtering documents in a search query request.
@@ -29,19 +31,25 @@ const (
 //	// Create range parameters
 //	minParam := reveald.NewParameter("price.min", "50")
 //	maxParam := reveald.NewParameter("price.max", "100")
+//
+//	// Create an exclusion parameter
+//	notParam := reveald.NewParameter("category.not", "feature")
 type Parameter struct {
-	name   string
-	values []string
-	min    string
-	max    string
-	wmin   bool
-	wmax   bool
+	name     string
+	values   []string
+	excludes []string
+	min      string
+	max      string
+	wmin     bool
+	wmax     bool
 }
 
 // NewParameter creates a Parameter based on the specified function arguments.
 //
 // It includes logic for handling special cases such as range query parameters.
 // If the parameter name has a ".min" or ".max" suffix, it will be treated as a range parameter.
+// If the parameter name has a ".not" suffix, its values will be treated as excluded values
+// rather than regular values.
 //
 // Example:
 //
@@ -51,10 +59,21 @@ type Parameter struct {
 //	// Create a range parameter
 //	minParam := reveald.NewParameter("price.min", "50")
 //	// The actual name will be "price" and min will be 50
+//
+//	// Create an exclusion parameter
+//	notParam := reveald.NewParameter("category.not", "feature")
+//	// The actual name will be "category" and "feature" will be excluded
 func NewParameter(name string, values ...string) Parameter {
 	pv := Parameter{}
 	pv.name = name
 	pv.values = values
+
+	if strings.HasSuffix(name, "."+ExcludeParameterName) {
+		pv.name = name[:len(name)-len("."+ExcludeParameterName)]
+		pv.values = []string{}
+		pv.excludes = values
+		return pv
+	}
 
 	for _, v := range values {
 		if strings.HasSuffix(name, "."+RangeMinParameterName) {
@@ -197,6 +216,7 @@ func (pv Parameter) MaxString() (string, bool) {
 //	// merged will have both min and max values
 func (pv Parameter) Merge(m Parameter) Parameter {
 	pv.values = append(pv.values, m.values...)
+	pv.excludes = append(pv.excludes, m.excludes...)
 
 	if pv.min == "" && m.wmin {
 		pv.min = m.min
@@ -245,6 +265,18 @@ func (pv Parameter) Value() string {
 //	fmt.Printf("Tags: %v\n", param.Values())
 func (pv Parameter) Values() []string {
 	return pv.values
+}
+
+// Excludes returns all values that should be excluded for a parameter.
+//
+// Excluded values are set with the ".not" suffix on the parameter name.
+//
+// Example:
+//
+//	param := reveald.NewParameter("category.not", "feature", "draft")
+//	fmt.Printf("Excluded categories: %v\n", param.Excludes())
+func (pv Parameter) Excludes() []string {
+	return pv.excludes
 }
 
 // Request is a container for parameters used in a search query.
@@ -367,8 +399,32 @@ func (q *Request) GetAll() map[string]Parameter {
 //
 //	// Set a parameter with multiple values
 //	request.Set("tags", "premium", "featured")
+//
+// A name with a ".min", ".max" or ".not" suffix is stored under the base name,
+// and only replaces that part of an existing parameter:
+//
+//	request.Set("category", "news")
+//	request.Set("category.not", "feature")
+//	// category now has values [news] and excludes [feature]
 func (q *Request) Set(name string, values ...string) {
-	q.params[name] = NewParameter(name, values...)
+	param := NewParameter(name, values...)
+
+	existing, ok := q.params[param.name]
+	if !ok || param.name == name {
+		q.params[param.name] = param
+		return
+	}
+
+	switch {
+	case strings.HasSuffix(name, "."+ExcludeParameterName):
+		existing.excludes = param.excludes
+	case strings.HasSuffix(name, "."+RangeMinParameterName):
+		existing.min, existing.wmin = param.min, param.wmin
+	case strings.HasSuffix(name, "."+RangeMaxParameterName):
+		existing.max, existing.wmax = param.max, param.wmax
+	}
+
+	q.params[param.name] = existing
 }
 
 // SetParam adds or replaces a parameter.

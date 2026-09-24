@@ -136,6 +136,27 @@ func Test_Merge_Values(t *testing.T) {
 	assert.Equal(t, expected, actual)
 }
 
+func Test_NewParameter_Excludes(t *testing.T) {
+	p := NewParameter("category."+ExcludeParameterName, "feature", "draft")
+
+	assert.Equal(t, "category", p.Name())
+	assert.Empty(t, p.Values())
+	assert.Equal(t, []string{"feature", "draft"}, p.Excludes())
+	assert.False(t, p.IsRangeValue())
+}
+
+func Test_Append_Excludes(t *testing.T) {
+	r := NewRequest(
+		NewParameter("category", "news"),
+		NewParameter("category.not", "feature"),
+	)
+
+	p, err := r.Get("category")
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"news"}, p.Values())
+	assert.Equal(t, []string{"feature"}, p.Excludes())
+}
+
 func Test_Merge_Ranges(t *testing.T) {
 	table := []struct {
 		name string
@@ -345,6 +366,57 @@ func Test_Set(t *testing.T) {
 			assert.ElementsMatch(t, tt.values, values)
 		})
 	}
+}
+
+func Test_Set_Suffixes(t *testing.T) {
+	t.Run("exclusion is stored under base name", func(t *testing.T) {
+		r := NewRequest()
+		r.Set("category.not", "feature")
+
+		assert.True(t, r.Has("category"))
+		assert.False(t, r.Has("category.not"))
+
+		p, _ := r.Get("category")
+		assert.Empty(t, p.Values())
+		assert.Equal(t, []string{"feature"}, p.Excludes())
+	})
+
+	t.Run("exclusion keeps existing values", func(t *testing.T) {
+		r := NewRequest(NewParameter("category", "news"))
+		r.Set("category.not", "feature", "draft")
+		r.Set("category.not", "draft")
+
+		p, _ := r.Get("category")
+		assert.Equal(t, []string{"news"}, p.Values())
+		assert.Equal(t, []string{"draft"}, p.Excludes())
+	})
+
+	t.Run("range bound keeps the other bound", func(t *testing.T) {
+		r := NewRequest()
+		r.Set("price.min", "10")
+		r.Set("price.max", "100")
+		r.Set("price.min", "20")
+
+		assert.False(t, r.Has("price.min"))
+
+		p, _ := r.Get("price")
+		min, _ := p.Min()
+		max, _ := p.Max()
+		assert.Equal(t, 20.0, min)
+		assert.Equal(t, 100.0, max)
+	})
+
+	t.Run("base name replaces the whole parameter", func(t *testing.T) {
+		r := NewRequest(
+			NewParameter("category", "news"),
+			NewParameter("category.not", "feature"),
+		)
+		r.Set("category", "blog")
+
+		p, _ := r.Get("category")
+		assert.Equal(t, []string{"blog"}, p.Values())
+		assert.Empty(t, p.Excludes())
+	})
 }
 
 func Test_SetParam(t *testing.T) {

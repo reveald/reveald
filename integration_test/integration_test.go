@@ -472,6 +472,27 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 				expectedHits: 2,
 				expectedAggs: map[string]int{"category": 1, "reviews.author": 3, "reviews.rating": 1},
 			},
+			{
+				name: "Exclude nested value",
+				params: []reveald.Parameter{
+					reveald.NewParameter("reviews.author.not", "Kevin White"),
+				},
+				// Excludes every product with a review by Kevin White (Product 4 and 5),
+				// even though they also have reviews by other authors
+				expectedHits: 3,
+				expectedAggs: map[string]int{"category": 3, "reviews.author": 9},
+			},
+			{
+				name: "Exclude nested value combined with nested filter",
+				params: []reveald.Parameter{
+					reveald.NewParameter("reviews.verified", "false"),
+					reveald.NewParameter("reviews.author.not", "Kevin White"),
+				},
+				// Products with an unverified review and no review by Kevin White:
+				// Product 1 (Lisa Anderson) and Product 3 (Tom Brown)
+				expectedHits: 2,
+				expectedAggs: map[string]int{"reviews.author": 2},
+			},
 		}
 
 		for _, tc := range testCases {
@@ -614,7 +635,9 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 			params       []reveald.Parameter
 			expectedHits int
 			expectedAggs map[string]int
-			description  string
+			// expectedCounts maps aggregation name to expected hit count per bucket value
+			expectedCounts map[string]map[string]int64
+			description    string
 		}{
 			{
 				name: "Filter by author shows all authors from matching documents",
@@ -686,6 +709,26 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 				},
 				description: "Author agg excludes author filter, showing all authors from all documents",
 			},
+			{
+				name: "Exclude author shows excluded author in own aggregation only",
+				params: []reveald.Parameter{
+					reveald.NewParameter("reviews.author.not", "Kevin White"),
+					reveald.NewParameter("reviews.verified", "false"),
+				},
+				// Products with an unverified review and no review by Kevin White: Product 1 and 3
+				expectedHits: 2,
+				// - reviews.author agg skips its own exclusion but keeps verified=false:
+				//   Lisa Anderson, Tom Brown, Nicole Garcia
+				// - reviews.verified agg keeps the exclusion, so only reviews of Product 1, 2 and 3 are counted
+				expectedAggs: map[string]int{
+					"reviews.author":   3,
+					"reviews.verified": 2,
+				},
+				expectedCounts: map[string]map[string]int64{
+					"reviews.verified": {"true": 7, "false": 2},
+				},
+				description: "Exclusion applies to parent documents in other aggregations",
+			},
 		}
 
 		for _, tc := range testCases {
@@ -708,6 +751,14 @@ func TestRevealedElasticsearchFeatures(t *testing.T) {
 					}
 
 					assert.Len(t, aggBucket, expectedCount, fmt.Sprintf("%s - %s", tc.description, aggName))
+				}
+
+				for aggName, expectedCounts := range tc.expectedCounts {
+					counts := map[string]int64{}
+					for _, bucket := range res.Aggregations[aggName] {
+						counts[fmt.Sprint(bucket.Value)] = bucket.HitCount
+					}
+					assert.Equal(t, expectedCounts, counts, fmt.Sprintf("%s - %s", tc.description, aggName))
 				}
 			})
 		}

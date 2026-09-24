@@ -3,6 +3,8 @@ package featureset
 import (
 	"testing"
 
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
+	"github.com/reveald/reveald/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -68,3 +70,61 @@ func TestNewNestedDocumentFilterFeature(t *testing.T) {
 
 // Note: Full Process() flow tests with query building and aggregation handling
 // are covered in integration tests as they require proper Elasticsearch responses
+
+func TestDynamicFilterFeature_Build(t *testing.T) {
+	build := func(feature *DynamicFilterFeature, params ...reveald.Parameter) *types.BoolQuery {
+		builder := reveald.NewQueryBuilder(reveald.NewRequest(params...), "index")
+		feature.build(builder)
+		return builder.RawQuery().Bool
+	}
+
+	t.Run("single value", func(t *testing.T) {
+		q := build(NewDynamicFilterFeature("category"),
+			reveald.NewParameter("category", "news"))
+
+		assert.Len(t, q.Must, 1)
+		assert.Equal(t, "news", q.Must[0].Term["category.keyword"].Value)
+		assert.Empty(t, q.MustNot)
+	})
+
+	t.Run("excluded value", func(t *testing.T) {
+		q := build(NewDynamicFilterFeature("category"),
+			reveald.NewParameter("category.not", "feature"))
+
+		assert.Empty(t, q.Must)
+		assert.Len(t, q.MustNot, 1)
+		assert.Len(t, q.MustNot[0].Bool.Should, 1)
+		assert.Equal(t, "feature", q.MustNot[0].Bool.Should[0].Term["category.keyword"].Value)
+	})
+
+	t.Run("included and excluded values", func(t *testing.T) {
+		q := build(NewDynamicFilterFeature("category"),
+			reveald.NewParameter("category", "news", "blog"),
+			reveald.NewParameter("category.not", "feature", "draft"))
+
+		assert.Len(t, q.Must, 1)
+		assert.Len(t, q.Must[0].Bool.Should, 2)
+		assert.Len(t, q.MustNot, 1)
+		assert.Len(t, q.MustNot[0].Bool.Should, 2)
+		assert.Equal(t, "draft", q.MustNot[0].Bool.Should[1].Term["category.keyword"].Value)
+	})
+
+	t.Run("excluded missing value", func(t *testing.T) {
+		q := build(NewDynamicFilterFeature("category", WithMissingValueAs("none")),
+			reveald.NewParameter("category.not", "none"))
+
+		assert.Len(t, q.MustNot, 1)
+		missing := q.MustNot[0].Bool.Should[0]
+		assert.Equal(t, "category.keyword", missing.Bool.MustNot[0].Exists.Field)
+	})
+
+	t.Run("excluded nested value", func(t *testing.T) {
+		q := build(NewNestedDocumentFilterFeature("tags.name"),
+			reveald.NewParameter("tags.name.not", "feature"))
+
+		assert.Empty(t, q.Must)
+		assert.Len(t, q.MustNot, 1)
+		assert.Equal(t, "tags", q.MustNot[0].Nested.Path)
+		assert.Equal(t, "feature", q.MustNot[0].Nested.Query.Bool.Should[0].Term["tags.name.keyword"].Value)
+	})
+}
