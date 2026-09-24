@@ -399,8 +399,32 @@ func (q *Request) GetAll() map[string]Parameter {
 //
 //	// Set a parameter with multiple values
 //	request.Set("tags", "premium", "featured")
+//
+// A name with a ".min", ".max" or ".not" suffix is stored under the base name,
+// and only replaces that part of an existing parameter:
+//
+//	request.Set("category", "news")
+//	request.Set("category.not", "feature")
+//	// category now has values [news] and excludes [feature]
 func (q *Request) Set(name string, values ...string) {
-	q.params[name] = NewParameter(name, values...)
+	param := NewParameter(name, values...)
+
+	existing, ok := q.params[param.name]
+	if !ok || param.name == name {
+		q.params[param.name] = param
+		return
+	}
+
+	switch {
+	case strings.HasSuffix(name, "."+ExcludeParameterName):
+		existing.excludes = param.excludes
+	case strings.HasSuffix(name, "."+RangeMinParameterName):
+		existing.min, existing.wmin = param.min, param.wmin
+	case strings.HasSuffix(name, "."+RangeMaxParameterName):
+		existing.max, existing.wmax = param.max, param.wmax
+	}
+
+	q.params[param.name] = existing
 }
 
 // SetParam adds or replaces a parameter.
