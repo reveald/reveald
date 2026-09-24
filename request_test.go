@@ -136,6 +136,27 @@ func Test_Merge_Values(t *testing.T) {
 	assert.Equal(t, expected, actual)
 }
 
+func Test_NewParameter_Excludes(t *testing.T) {
+	p := NewParameter("category."+ExcludeParameterName, "feature", "draft")
+
+	assert.Equal(t, "category", p.Name())
+	assert.Empty(t, p.Values())
+	assert.Equal(t, []string{"feature", "draft"}, p.Excludes())
+	assert.False(t, p.IsRangeValue())
+}
+
+func Test_Append_Excludes(t *testing.T) {
+	r := NewRequest(
+		NewParameter("category", "news"),
+		NewParameter("category.not", "feature"),
+	)
+
+	p, err := r.Get("category")
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"news"}, p.Values())
+	assert.Equal(t, []string{"feature"}, p.Excludes())
+}
+
 func Test_Merge_Ranges(t *testing.T) {
 	table := []struct {
 		name string

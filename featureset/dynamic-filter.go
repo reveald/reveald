@@ -106,95 +106,68 @@ func (dff *DynamicFilterFeature) build(builder *reveald.QueryBuilder) {
 			return
 		}
 
-		if !dff.nested {
-			// Term query with 'should' clauses for non-nested fields
-			if len(p.Values()) == 1 && (dff.agg.missingValue == "" || p.Values()[0] != dff.agg.missingValue) {
-				// Single value (not missing label) - simple term query
-				termQuery := types.Query{
-					Term: map[string]types.TermQuery{
-						keyword: {Value: p.Values()[0]},
-					},
-				}
-
-				builder.With(termQuery)
+		if len(p.Values()) > 0 {
+			if !dff.nested && len(p.Values()) == 1 {
+				// Single value - simple term query (or missing query for the missing label)
+				builder.With(dff.valueQuery(keyword, p.Values()[0]))
 			} else {
-				// Multiple values or contains missing label - bool query with should clauses
-				shouldClauses := make([]types.Query, 0, len(p.Values()))
-				for _, v := range p.Values() {
-					if dff.agg.missingValue != "" && v == dff.agg.missingValue {
-						// Build missing filter query (must_not exists covers both null and missing)
-						missingQuery := types.Query{
-							Bool: &types.BoolQuery{
-								MustNot: []types.Query{
-									{Exists: &types.ExistsQuery{Field: keyword}},
-								},
-							},
-						}
-						shouldClauses = append(shouldClauses, missingQuery)
-					} else {
-						termQuery := types.Query{
-							Term: map[string]types.TermQuery{
-								keyword: {Value: v},
-							},
-						}
-						shouldClauses = append(shouldClauses, termQuery)
-					}
-				}
-
-				if len(shouldClauses) > 0 {
-					boolQuery := types.Query{
-						Bool: &types.BoolQuery{
-							Should: shouldClauses,
-						},
-					}
-
-					builder.With(boolQuery)
-				}
-			}
-		} else {
-			// Nested query for nested fields
-			path := strings.Split(dff.property, ".")[0]
-
-			// Create should clauses for the nested query
-			shouldClauses := make([]types.Query, 0, len(p.Values()))
-			for _, v := range p.Values() {
-				if dff.agg.missingValue != "" && v == dff.agg.missingValue {
-					// Build missing filter query (must_not exists covers both null and missing)
-					missingQuery := types.Query{
-						Bool: &types.BoolQuery{
-							MustNot: []types.Query{
-								{Exists: &types.ExistsQuery{Field: keyword}},
-							},
-						},
-					}
-					shouldClauses = append(shouldClauses, missingQuery)
-				} else {
-					termQuery := types.Query{
-						Term: map[string]types.TermQuery{
-							keyword: {Value: v},
-						},
-					}
-					shouldClauses = append(shouldClauses, termQuery)
-				}
-			}
-
-			if len(shouldClauses) > 0 {
-				// Create the inner bool query
-				innerBoolQuery := types.BoolQuery{
-					Should: shouldClauses,
-				}
-
-				// Create the nested query with the inner bool query
-				nestedQuery := types.Query{
-					Nested: &types.NestedQuery{
-						Path:  path,
-						Query: types.Query{Bool: &innerBoolQuery},
-					},
-				}
-
-				builder.With(nestedQuery)
+				builder.With(dff.wrapNested(dff.anyOf(keyword, p.Values())))
 			}
 		}
+
+		if len(p.Excludes()) > 0 {
+			// Exclude documents matching any of the excluded values
+			builder.Without(dff.wrapNested(dff.anyOf(keyword, p.Excludes())))
+		}
+	}
+}
+
+// valueQuery builds a query matching a single value, or documents missing
+// the property if the value equals the configured missing label.
+func (dff *DynamicFilterFeature) valueQuery(keyword, value string) types.Query {
+	if dff.agg.missingValue != "" && value == dff.agg.missingValue {
+		// Build missing filter query (must_not exists covers both null and missing)
+		return types.Query{
+			Bool: &types.BoolQuery{
+				MustNot: []types.Query{
+					{Exists: &types.ExistsQuery{Field: keyword}},
+				},
+			},
+		}
+	}
+
+	return types.Query{
+		Term: map[string]types.TermQuery{
+			keyword: {Value: value},
+		},
+	}
+}
+
+// anyOf builds a bool query with 'should' clauses matching any of the values.
+func (dff *DynamicFilterFeature) anyOf(keyword string, values []string) types.Query {
+	shouldClauses := make([]types.Query, 0, len(values))
+	for _, v := range values {
+		shouldClauses = append(shouldClauses, dff.valueQuery(keyword, v))
+	}
+
+	return types.Query{
+		Bool: &types.BoolQuery{
+			Should: shouldClauses,
+		},
+	}
+}
+
+// wrapNested wraps the query in a nested query for nested fields.
+func (dff *DynamicFilterFeature) wrapNested(query types.Query) types.Query {
+	if !dff.nested {
+		return query
+	}
+
+	return types.Query{
+		Nested: &types.NestedQuery{
+			Path:  strings.Split(dff.property, ".")[0],
+			Query: query,
+		},
 	}
 }
 
