@@ -110,7 +110,8 @@ func (ndw *NestedDocumentWrapper) Process(builder *reveald.QueryBuilder, next re
 
 func (ndw *NestedDocumentWrapper) wrapAndApplyToMainBuilder(builtReq *search.Request, mainBuilder *reveald.QueryBuilder) {
 	// Wrap query in nested
-	if builtReq.Query != nil && builtReq.Query.Bool != nil && len(builtReq.Query.Bool.Must) > 0 {
+	if builtReq.Query != nil && builtReq.Query.Bool != nil &&
+		(len(builtReq.Query.Bool.Must) > 0 || len(builtReq.Query.Bool.MustNot) > 0) {
 		nestedQuery := types.Query{
 			Nested: &types.NestedQuery{
 				Path:      ndw.path,
@@ -123,7 +124,7 @@ func (ndw *NestedDocumentWrapper) wrapAndApplyToMainBuilder(builtReq *search.Req
 
 	// Wrap each aggregation
 	for aggName, agg := range builtReq.Aggregations {
-		filterClauses := ndw.buildFilterClausesForAgg(aggName, builtReq.Query)
+		filter := ndw.buildFilterForAgg(aggName, builtReq.Query)
 
 		var wrappedAgg types.Aggregations
 
@@ -137,7 +138,7 @@ func (ndw *NestedDocumentWrapper) wrapAndApplyToMainBuilder(builtReq *search.Req
 						Nested: &types.NestedAggregation{Path: &ndw.path},
 						Aggregations: map[string]types.Aggregations{
 							aggName + "._filter": {
-								Filter: &types.Query{Bool: &types.BoolQuery{Must: filterClauses}},
+								Filter: filter,
 								Aggregations: map[string]types.Aggregations{
 									aggName: agg,
 								},
@@ -152,7 +153,7 @@ func (ndw *NestedDocumentWrapper) wrapAndApplyToMainBuilder(builtReq *search.Req
 				Nested: &types.NestedAggregation{Path: &ndw.path},
 				Aggregations: map[string]types.Aggregations{
 					aggName + "._filter": {
-						Filter: &types.Query{Bool: &types.BoolQuery{Must: filterClauses}},
+						Filter: filter,
 						Aggregations: map[string]types.Aggregations{
 							aggName: agg,
 						},
@@ -272,26 +273,38 @@ func (ndw *NestedDocumentWrapper) unwrapNestedAggregation(aggName string, rawAgg
 	return innerAgg
 }
 
-// buildFilterClausesForAgg builds filter clauses for an aggregation.
+// buildFilterForAgg builds the filter query for an aggregation from the inner
+// query's must and must_not clauses.
 // In conjunctive mode: all filters are included.
-// In disjunctive mode: all filters except the one for this specific aggregation are included.
-func (ndw *NestedDocumentWrapper) buildFilterClausesForAgg(aggName string, query *types.Query) []types.Query {
+// In disjunctive mode: all filters except the ones for this specific aggregation are included.
+func (ndw *NestedDocumentWrapper) buildFilterForAgg(aggName string, query *types.Query) *types.Query {
+	filter := &types.Query{Bool: &types.BoolQuery{}}
 	if query == nil || query.Bool == nil {
-		return nil
+		return filter
 	}
 
+	filter.Bool.Must = ndw.buildFilterClausesForAgg(aggName, query.Bool.Must)
+	filter.Bool.MustNot = ndw.buildFilterClausesForAgg(aggName, query.Bool.MustNot)
+
+	return filter
+}
+
+// buildFilterClausesForAgg builds filter clauses for an aggregation.
+// In conjunctive mode: all clauses are included.
+// In disjunctive mode: all clauses except the ones for this specific aggregation are included.
+func (ndw *NestedDocumentWrapper) buildFilterClausesForAgg(aggName string, clauses []types.Query) []types.Query {
 	// In conjunctive mode, include all filters
 	if !ndw.disjunctive {
-		return append([]types.Query{}, query.Bool.Must...)
+		return append([]types.Query{}, clauses...)
 	}
 
 	// In disjunctive mode, exclude the filter for this specific aggregation
 	var filterClauses []types.Query
-	for _, mustClause := range query.Bool.Must {
+	for _, clause := range clauses {
 		// Check if this filter is for the current aggregation
-		isForThisAgg := ndw.isFilterForAggregation(aggName, mustClause)
+		isForThisAgg := ndw.isFilterForAggregation(aggName, clause)
 		if !isForThisAgg {
-			filterClauses = append(filterClauses, mustClause)
+			filterClauses = append(filterClauses, clause)
 		}
 	}
 
