@@ -609,8 +609,19 @@ func Reflect(t reflect.Type, options ...ReflectionOption) ([]reveald.Feature, []
 			descOptionName := jsonPath + defaults.sortDescSuffix
 			ascOptionName := jsonPath + defaults.sortAscSuffix
 
-			sortOpts = append(sortOpts, WithSortOption(descOptionName, jsonPath, false))
-			sortOpts = append(sortOpts, WithSortOption(ascOptionName, jsonPath, true))
+			// String fields in Elasticsearch need the .keyword subfield for sorting,
+			// unless the field is a slice ([]string arrays sort directly without .keyword).
+			sortField := jsonPath
+			originalKind := f.Type.Kind()
+			if originalKind == reflect.Pointer {
+				originalKind = f.Type.Elem().Kind()
+			}
+			if fieldType.Kind() == reflect.String && originalKind != reflect.Slice {
+				sortField = jsonPath + ".keyword"
+			}
+
+			sortOpts = append(sortOpts, WithSortOption(descOptionName, sortField, false))
+			sortOpts = append(sortOpts, WithSortOption(ascOptionName, sortField, true))
 
 			// Check if this field should be the default sort option
 			if opts.defaultSortDesc && defaultSortOptionName == "" {
